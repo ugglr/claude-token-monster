@@ -216,7 +216,7 @@ export const registerDiet = (on: On) => {
         {ready.length > 0 && (
           <Box>
             <Text color="yellow">Armed: eating ~{kilo(plate)} tokens from the context on your next /compact </Text>
-            <Button key="cancel" label="Cancel" hotkey="x" onPress={() => disarm($)} />
+            <Button key="cancel" label="Cancel" hotkey="x" plain onPress={() => disarm($)} />
           </Box>
         )}
         {dishes.length === 0 && <Text dimColor>No tool results to eat yet.</Text>}
@@ -241,14 +241,15 @@ export const registerDiet = (on: On) => {
             key="eat"
             label={chosen.length === 0 ? 'Eat' : `Eat ${chosen.length} (frees ~${kilo(saving)})`}
             hotkey="e"
+            plain
             onPress={() => arm($)}
           />
-          <Text> </Text>
-          <Button key="refresh" label="Refresh" hotkey="r" onPress={() => fill($)} />
-          <Text> </Text>
-          <Button key="back" label="Back" hotkey="q" onPress={() => hideDiet($)} />
+          <Text>  </Text>
+          <Button key="refresh" label="Refresh" hotkey="r" plain onPress={() => fill($)} />
+          <Text>  </Text>
+          <Button key="back" label="Back" hotkey="q" plain onPress={() => hideDiet($)} />
         </Box>
-        <Text dimColor>1-9 pick, e eat, q back to the monster. Eat puts /compact in your prompt; Enter removes them from the context, each left as a short note.</Text>
+        <Text dimColor>Eat puts /compact in your prompt; Enter removes them from the context, each left as a short note.</Text>
       </Box>
     )
   })

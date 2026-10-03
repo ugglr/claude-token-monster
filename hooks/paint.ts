@@ -1057,11 +1057,12 @@ const torso = (c: Canvas, f: Shape) => {
 }
 
 // Super mode hair: golden spikes, longer each level, swaying in the aura.
-const hair = (c: Canvas, { t, cx, cy, rx, ry, power, level }: Shape) => {
+const hair = (c: Canvas, { t, cx, cy, rx, ry, r0, power, level }: Shape) => {
   if (power < 0.3) return
 
   const spikes = 5
-  const length = Math.min((2 + level * 3) * power, cy - ry - 1)
+  // Capped to the monster's size, so a narrow pane still shows a monster, not a haircut.
+  const length = Math.min((2 + level * 3) * power, cy - ry - 1, r0 * 0.9)
 
   for (let i = 0; i < spikes; i++) {
     const offset = (i - (spikes - 1) / 2) / ((spikes - 1) / 2)
@@ -1378,17 +1379,59 @@ export const paint = (s: Scene, width: number, height: number): Uint32Array => {
   return c.px
 }
 
+// The xterm 256-color palette: a 6x6x6 cube and 24 greys.
+const LEVELS = [0, 95, 135, 175, 215, 255]
+const around = (v: number) => {
+  const above = LEVELS.findIndex(level => level >= v)
+
+  return above <= 0 ? [LEVELS[0]!] : [LEVELS[above - 1]!, LEVELS[above]!]
+}
+
+// A terminal without 24-bit color rounds each pixel to that palette, and a dark
+// navy or purple lands on a grey. This picks the palette color itself: of the
+// cube colors around the pixel and the nearest grey, the closest once a shift in
+// hue costs extra, so a colored pixel keeps its color where it can.
+const memo = new Map<number, number>()
+
+export const to256 = (color: number) => {
+  const hit = memo.get(color)
+
+  if (hit !== undefined) return hit
+
+  const [r, g, b] = [(color >> 16) & 255, (color >> 8) & 255, color & 255]
+  const mean = (r + g + b) / 3
+  const level = Math.min(23, Math.max(0, Math.round((mean - 8) / 10)))
+  const candidates: [number, number, number][] = [[8 + level * 10, 8 + level * 10, 8 + level * 10]]
+
+  for (const x of around(r)) for (const y of around(g)) for (const z of around(b)) candidates.push([x, y, z])
+
+  const cost = ([x, y, z]: [number, number, number]) => {
+    const m = (x + y + z) / 3
+    const hue = (x - m - (r - mean)) ** 2 + (y - m - (g - mean)) ** 2 + (z - m - (b - mean)) ** 2
+
+    return (x - r) ** 2 + (y - g) ** 2 + (z - b) ** 2 + hue * 1.5
+  }
+  const [x, y, z] = candidates.reduce((best, one) => (cost(one) < cost(best) ? one : best))
+  const out = (x << 16) | (y << 8) | z
+
+  if (memo.size < 4096) memo.set(color, out)
+
+  return out
+}
+
 // Two pixels a cell: the upper half block, foreground the top pixel, background the bottom.
-export const encode = (px: Uint32Array, columns: number, rows: number) => {
+export const encode = (px: Uint32Array, columns: number, rows: number, is256 = false) => {
   const words = new Uint32Array(columns * rows * 3)
 
   for (let row = 0; row < rows; row++) {
     for (let x = 0; x < columns; x++) {
       const i = (row * columns + x) * 3
 
+      const [top, bottom] = [px[2 * row * columns + x] ?? 0, px[(2 * row + 1) * columns + x] ?? 0]
+
       words[i] = 0x2580
-      words[i + 1] = px[2 * row * columns + x] ?? 0
-      words[i + 2] = px[(2 * row + 1) * columns + x] ?? 0
+      words[i + 1] = is256 ? to256(top) : top
+      words[i + 2] = is256 ? to256(bottom) : bottom
     }
   }
 

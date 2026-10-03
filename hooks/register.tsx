@@ -306,6 +306,8 @@ let loop: Timer | undefined
 let lapse: Timer | undefined
 let pulse: Timer | undefined
 let canvas = { columns: 0, rows: 0 }
+// Whether the terminal shows only 256 colors, so the sprite picks them itself.
+let is256 = false
 let painting = false
 
 const stop = () => {
@@ -329,7 +331,7 @@ const frame = async ($: EngineInterface) => {
     const done = await $.ui.blit({
       requestId: PANE,
       key: 'sprite',
-      cells: encode(paint(scene, canvas.columns, canvas.rows * 2), canvas.columns, canvas.rows),
+      cells: encode(paint(scene, canvas.columns, canvas.rows * 2), canvas.columns, canvas.rows, is256),
     })
 
     if (done.deny !== undefined) stop()
@@ -350,6 +352,11 @@ export const register: Register = on => {
     }
 
     scene.look = await read($, look)
+
+    // 24-bit color announces itself in COLORTERM; Apple Terminal, for one, does not have it.
+    const depth = (await $.env.get('COLORTERM')) ?? ''
+
+    is256 = !['truecolor', '24bit'].includes(depth.toLowerCase())
 
     const usage = await $.session.usage()
 
@@ -620,7 +627,7 @@ export const register: Register = on => {
         settle(scene)
         loop = $.clock.every(1000 / FPS, () => void frame($))
       }
-      sprite = <Raster key="sprite" columns={wide} rows={rows} cells={encode(paint(scene, wide, rows * 2), wide, rows)} />
+      sprite = <Raster key="sprite" columns={wide} rows={rows} cells={encode(paint(scene, wide, rows * 2), wide, rows, is256)} />
     } else {
       const drawing = ASCII[monster] ?? ASCII.cookie!
 
@@ -658,25 +665,29 @@ export const register: Register = on => {
           )}
           {remark !== undefined && <Text dimColor>{remark}</Text>}
           {dieting > 0 && <Text color="yellow">eating ~{kilo(plate)} tokens from the context on your next /compact</Text>}
+          {/* Plain buttons show their key: `m: Monster`. The keys work while the pane holds the keyboard. */}
           <Box>
             <Button
               key="monster"
               label="Monster"
               hotkey="m"
+              plain
               onPress={() => restyle($, current => ({ ...current, monster: after(NAMES, current.monster) }))}
             />
-            <Text> </Text>
+            <Text>  </Text>
             <Button
               key="color"
               label="Color"
               hotkey="c"
+              plain
               onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
             />
-            <Text> </Text>
+            <Text>  </Text>
             {/* diet.tsx answers this press: onPress cannot call into it, as the engine
                 refuses $ passed across an import. */}
-            <Button key="diet" label="Diet: free context" hotkey="d" onPress={() => undefined} />
+            <Button key="diet" label="Diet: free context" hotkey="d" plain onPress={() => undefined} />
           </Box>
+          {!e.props.isFocused && <Text dimColor>ctrl+x tab or a click gives me the keys</Text>}
         </Box>
       </Box>
     )
