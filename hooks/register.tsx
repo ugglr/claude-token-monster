@@ -1,12 +1,13 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionContextUsage, SessionMessage, Timer } from 'claude-code'
+import type { EngineInterface, Register, SessionContextUsage, Timer } from 'claude-code'
 
-import type { Belly, Dish, Limit, Look } from '../types'
-import { BURP, MINUTE, PALETTE, SAD, STARVING, encode, paint } from './paint'
+import type { Belly, Limit, Look } from '../types'
+import { DIET, label, registerDiet } from './diet'
+import { kilo } from './format'
+import { AMBER, BURP, MINUTE, PALETTE, RED, SAD, STARVING, encode, paint, step } from './paint'
 import type { Scene } from './paint'
 
 const PANE = 'token-monster'
-const DIET = 'token-monster-diet'
 const FPS = 10
 const BAR = 20
 
@@ -94,8 +95,6 @@ const look = atom({ plugin: 'token-monster', key: 'look' } as const, { monster: 
 const now = atom({ plugin: 'token-monster', key: 'now' } as const, 0)
 const pantry = atom({ plugin: 'token-monster', key: 'pantry' } as const, [])
 const doing = atom({ plugin: 'token-monster', key: 'doing' } as const, '')
-const menu = atom({ plugin: 'token-monster', key: 'menu' } as const, [])
-const picked = atom({ plugin: 'token-monster', key: 'picked' } as const, [])
 
 // What the sprite animates from; the atoms above are what the readout draws.
 const scene: Scene = {
@@ -113,8 +112,6 @@ const scene: Scene = {
   motes: [],
 }
 
-const kilo = (n: number) =>
-  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`
 const after = (list: string[], at: string) => list[(list.indexOf(at) + 1) % list.length] ?? at
 const hex = (color: number) => `#${color.toString(16).padStart(6, '0')}`
 const span = (ms: number) => {
@@ -128,7 +125,7 @@ const bar = (percent: number, width: number) => {
 
   return ['█'.repeat(filled), '░'.repeat(width - filled)] as const
 }
-const barColor = (percent: number) => (percent >= 75 ? 'red' : percent >= 50 ? 'yellow' : 'green')
+const barColor = (percent: number) => (percent >= RED ? 'red' : percent >= AMBER ? 'yellow' : 'green')
 
 // Tamagotchi rules: a full belly beats everything, then hunger, then a burp, then how full it is.
 const feeling = ({ percent, fedAt, burpAt }: Belly, at: number) => {
@@ -148,10 +145,9 @@ const larder = (limits: readonly Limit[]) => {
   const most = Math.max(0, ...limits.map(limit => limit.percentUsed))
 
   if (limits.length === 0) return undefined
-  if (most >= 90) return 'pantry almost empty! me ration'
-  if (most >= 75) return 'pantry getting low...'
-  if (most < 25) return 'pantry full. feast time!'
-  return undefined
+  if (most >= RED) return 'pantry almost empty! me ration'
+  if (most >= AMBER) return 'pantry getting low...'
+  return 'pantry full. feast time!'
 }
 
 const feed = async ($: EngineInterface, context: SessionContextUsage) => {
@@ -206,7 +202,11 @@ const tick = async ($: EngineInterface) => {
 }
 
 const act = async ($: EngineInterface, text: string) => {
-  await update($, doing, last => (last === text ? last : text))
+  await update($, doing, () => text)
+}
+
+const count = async ($: EngineInterface) => {
+  scene.minions = (await $.agent.list()).filter(agent => agent.status === 'running').length
 }
 
 const restyle = async ($: EngineInterface, change: (current: Look) => Look) => {
@@ -226,12 +226,17 @@ const stop = () => {
 }
 
 const frame = async ($: EngineInterface) => {
-  scene.tick += 1
+  if (canvas.columns === 0) return
+
+  step(scene, canvas.columns, canvas.rows * 2)
+
+  // Background agents outlive their tool call, so minions come from the agent list.
+  if (scene.tick % 20 === 0) void count($)
 
   const lively = scene.busy || scene.motes.length > 0 || scene.tick - scene.typedAt < 15
 
   // Idle, a third of the frames is plenty for blinking and breathing.
-  if (painting || canvas.columns === 0 || (!lively && scene.tick % 3 !== 0)) return
+  if (painting || (!lively && scene.tick % 3 !== 0)) return
 
   painting = true
 
@@ -251,82 +256,6 @@ const frame = async ($: EngineInterface) => {
   }
 }
 
-// The diet: tool results replaced by a stub, so every tool call keeps its result
-// and the conversation stays valid. Roughly four characters to a token.
-const COURSES = 12
-const EATEN = '[Token Monster ate this '
-const LABELS = ['file_path', 'command', 'url', 'pattern', 'query', 'description', 'prompt']
-
-const estimate = (text: string) => Math.ceil(text.length / 4)
-const label = (input: Record<string, unknown>) => String(LABELS.map(name => input[name]).find(value => typeof value === 'string') ?? '')
-
-const stub = (tool: string, text: string) =>
-  `${EATEN}${tool} result (~${kilo(estimate(text))} tokens) to free context. Run the tool again if you need it.]`
-
-export const stubbed = (messages: readonly SessionMessage[], ids: ReadonlySet<string>): SessionMessage[] => {
-  const tools = new Map(messages.flatMap(message => message.toolUses.map(use => [use.tool_use_id, use.tool])))
-
-  return messages.map(message =>
-    message.toolResults?.some(result => ids.has(result.tool_use_id))
-      ? {
-          role: message.role,
-          text: message.text,
-          toolUses: message.toolUses,
-          toolResults: message.toolResults.map(result =>
-            ids.has(result.tool_use_id)
-              ? {
-                  tool_use_id: result.tool_use_id,
-                  isError: result.isError,
-                  text: stub(tools.get(result.tool_use_id) ?? 'tool', result.text),
-                }
-              : result,
-          ),
-        }
-      : message,
-  )
-}
-
-const fill = async ($: EngineInterface) => {
-  const dishes: Dish[] = []
-
-  for (const message of await $.session.messages()) {
-    for (const use of message.toolUses) {
-      if (use.text === undefined || use.text.startsWith(EATEN)) continue
-
-      dishes.push({ id: use.tool_use_id, tool: use.tool, label: label(use.input), tokens: estimate(use.text) })
-    }
-  }
-
-  await update($, menu, () => dishes.sort((a, b) => b.tokens - a.tokens).slice(0, COURSES))
-  await update($, picked, () => [])
-}
-
-const pick = (id: string) => (ids: string[]) => (ids.includes(id) ? ids.filter(one => one !== id) : [...ids, id])
-
-const diet = async ($: EngineInterface) => {
-  await fill($)
-  await $.ui.open({ id: DIET, title: 'Diet', columns: 48 })
-}
-
-let plate = new Set<string>()
-
-const eat = async ($: EngineInterface) => {
-  plate = new Set(await read($, picked))
-
-  if (plate.size === 0) return
-
-  try {
-    const done = await $.session.compact()
-    $.ui.toast(done.skip === undefined ? `Me ate ${plate.size} tool results. *burp*` : `Me could not eat: ${done.skip}`)
-  } catch (error) {
-    $.ui.toast(`Me could not eat: ${error instanceof Error ? error.message : String(error)}`)
-  } finally {
-    plate = new Set()
-  }
-
-  await fill($)
-}
-
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const saved = (await $.store.get('look')) as Partial<Look> | undefined
@@ -336,7 +265,6 @@ export const register: Register = on => {
     }
 
     scene.look = await read($, look)
-    scene.belly = await read($, belly)
 
     const usage = await $.session.usage()
 
@@ -358,7 +286,7 @@ export const register: Register = on => {
     const words = e.args.toLowerCase().split(/\s+/).filter(Boolean)
 
     if (words[0] === 'diet') {
-      await diet($)
+      await $.ui.open({ id: DIET, title: 'Diet', columns: 48 })
 
       return { text: 'Pick what Token Monster eats.' }
     }
@@ -391,15 +319,16 @@ export const register: Register = on => {
   on('session.compact', async ($, e, next) => {
     const done = await next(e)
 
-    if (done.skip === undefined && e.agentId === undefined && e.trigger !== 'precompute') await burp($, done.tokensAfter)
+    // A hook that fails after next() has its answer dropped and core summarizes instead,
+    // which would turn a diet into a full compaction: the burp may fail, the meal may not.
+    try {
+      if (done.skip === undefined && e.agentId === undefined && e.trigger !== 'precompute') await burp($, done.tokensAfter)
+    } catch {}
 
     return done
   })
 
-  // Answers only the compaction eat() started; /compact and every other one pass through.
-  on('session.compact', { trigger: 'plugin' }, ($, e, next) =>
-    plate.size === 0 || e.agentId !== undefined ? next(e) : { messages: stubbed(e.messages, plate) },
-  )
+  registerDiet(on)
 
   on('prompt.edit', ($, e, next) => {
     scene.typedAt = scene.tick
@@ -433,14 +362,10 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    const isMain = e.agentId === undefined
-    const isAgent = e.tool === 'Agent'
+    if (e.agentId !== undefined) return next(e)
 
-    if (isMain) {
-      scene.tools.set(e.tool_use_id, e.tool)
-      await act($, `${e.tool} ${label(e as unknown as Record<string, unknown>)}`.trim())
-    }
-    if (isAgent) scene.minions += 1
+    scene.tools.set(e.tool_use_id, e.tool)
+    await act($, `${e.tool} ${label(e as unknown as Record<string, unknown>)}`.trim())
 
     try {
       const ran = await next(e)
@@ -449,11 +374,8 @@ export const register: Register = on => {
 
       return ran
     } finally {
-      if (isAgent) scene.minions -= 1
-      if (isMain) {
-        scene.tools.delete(e.tool_use_id)
-        await act($, [...scene.tools.values()].at(-1) ?? (scene.busy ? 'thinking...' : ''))
-      }
+      scene.tools.delete(e.tool_use_id)
+      await act($, [...scene.tools.values()].at(-1) ?? (scene.busy ? 'thinking...' : ''))
     }
   })
 
@@ -549,48 +471,8 @@ export const register: Register = on => {
             onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
           />
           <Text> </Text>
-          <Button key="diet" label="Diet" hotkey="d" onPress={() => diet($)} />
+          <Button key="diet" label="Diet" hotkey="d" onPress={() => $.ui.open({ id: DIET, title: 'Diet', columns: 48 })} />
         </Box>
-      </Box>
-    )
-  })
-
-  on('ui.render', { component: 'Pane', requestId: DIET }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
-    const dishes = await read($, menu)
-    const ids = await read($, picked)
-    const room = Math.max(12, e.props.bodyColumns - 2)
-    const chosen = dishes.filter(dish => ids.includes(dish.id))
-    const saving = chosen.reduce((sum, dish) => sum + dish.tokens, 0)
-
-    return (
-      <Box flexDirection="column">
-        <Text bold>Pick what me eat, biggest first</Text>
-        {dishes.length === 0 && <Text dimColor>No tool results to eat yet.</Text>}
-        {dishes.map((dish, index) => {
-          const size = ` ~${kilo(dish.tokens)}`
-          const name = `${ids.includes(dish.id) ? '[x]' : '[ ]'} ${dish.tool} ${dish.label}`
-
-          return (
-            <Button
-              key={`dish-${index}`}
-              label={`${name.slice(0, room - size.length).padEnd(room - size.length)}${size}`}
-              onPress={() => update($, picked, pick(dish.id))}
-            />
-          )
-        })}
-        <Text> </Text>
-        <Box>
-          <Button
-            key="eat"
-            label={chosen.length === 0 ? 'Eat' : `Eat ${chosen.length} (~${kilo(saving)})`}
-            hotkey="e"
-            onPress={() => eat($)}
-          />
-          <Text> </Text>
-          <Button key="refresh" label="Refresh" hotkey="r" onPress={() => fill($)} />
-        </Box>
-        <Text dimColor>Eaten results become a short note. The next turn re-reads the context uncached.</Text>
       </Box>
     )
   })

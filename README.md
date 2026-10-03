@@ -14,7 +14,7 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | **The glow around it** | Your session and weekly limits: green with room to spare, amber past 50%, pulsing red past 80%. It sweats when you get close. |
 | **Tokens flying into its mouth** | Claude is working. The color says which tool: green Bash, blue reads and searches, orange edits, purple web, pink agents, gold for thinking. |
 | **Looking down and drooling** | You are typing. Your prompt floats up into its mouth when you send it. |
-| **Mini monsters** | One per running subagent. |
+| **Mini monsters** | One per running subagent, background agents included. |
 | **Angry brows** | A tool just failed. |
 
 Under the sprite, a readout gives the exact numbers:
@@ -32,9 +32,11 @@ weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
 
 ## Put it on a diet
 
-Today you can only `/clear` or `/compact` the whole conversation. The diet lets you pick exactly what to drop. Press `d` in the pane, or run `/token-monster diet`, to list the biggest tool results in the conversation (file reads, command output, web pages). Tick the ones you no longer need and press **Eat**.
+Today you can only `/clear` or `/compact` the whole conversation. The diet lets you pick what goes. Press `d` in the pane, or run `/token-monster diet`, to list the biggest tool results in the conversation (file reads, command output, web pages). Tick the ones you no longer need and press **Eat**.
 
-Each eaten result is replaced by a short note, so the model knows something was there and can run the tool again if it needs it. Everything else in the conversation stays exactly as it was. Eating works between turns, and the next turn reads the context uncached once.
+Eat arms the diet and puts `/compact` in your prompt. Press Enter, and instead of summarizing the conversation, Token Monster replaces each picked result with a short note, so the model knows something was there and can run the tool again if it needs it. **Cancel** in the pane disarms it, and an automatic compaction is never touched.
+
+What changes, exactly: each message holding an eaten result is rebuilt from its text. The diet only offers results whose message holds no image or document, so nothing else in it is lost; several text blocks in such a message are joined into one. Every other message stays exactly as it was. The next turn reads the context uncached once.
 
 ## Install
 

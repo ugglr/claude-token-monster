@@ -1,8 +1,11 @@
 {
   "name": "token-monster",
   "version": "0.1.0",
-  "description": "A monster in a side pane that eats tokens and shows how full the context is",
-  "author": { "name": "Carl Igelström", "url": "https://github.com/ugglr" },
+  "description": "A pixel-art monster in a side pane that eats tokens and shows context, limits and activity at a glance",
+  "author": {
+    "name": "Carl Igelström",
+    "url": "https://github.com/ugglr"
+  },
   "repository": "https://github.com/ugglr/claude-token-monster",
   "license": "MIT",
   "types": "./types/index.d.ts"

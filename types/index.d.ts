@@ -23,6 +23,7 @@ declare module 'claude-code' {
       doing: string
       menu: Dish[]
       picked: string[]
+      armed: string[]
     }
   }
 }
