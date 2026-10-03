@@ -196,3 +196,73 @@ test('/token-monster swaps by name and lists the options for an unknown word', a
   expect((await run('Gremlin GREEN')).text).toBe('Token Monster is hungry.')
   expect(await (await pane($, 'desktop')).find(text(' |  o   o  |'))).toBeDefined()
 })
+
+// $.tool.call's overloads are too deep for tsc over a loose argument; one plain signature.
+type Caller = { call: (input: Record<string, unknown>) => Promise<unknown> }
+const call = ($: Engine, input: Record<string, unknown>) => ($.tool as unknown as Caller).call(input)
+
+const tool = (on: On, gate?: Promise<void>, reached?: () => void) => {
+  on('agent.list', () => ({ value: [] }) as never)
+  on('tool.call', async (_, e) => {
+    if (e.tool === 'Agent') {
+      reached?.()
+      await gate
+    }
+
+    return { result: {}, text: 'x'.repeat(400) } as never
+  })
+}
+
+test('chained tool calls show a combo in the readout', async ($, on) => {
+  engine(on)
+  tool(on)
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  const ui = await pane($, 'desktop')
+
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  for (let i = 0; i < 3; i++) await call($, { tool: 'Read', file_path: `f${i}.ts` })
+
+  expect(await ui.find(text('> thinking...  3 HIT COMBO'))).toBeDefined()
+})
+
+test('a running subagent sends the monster into super mode, and it powers down after', async ($, on) => {
+  engine(on)
+  let release = () => {}
+  let reached = () => {}
+  const gate = new Promise<void>(resolve => (release = resolve))
+  const inside = new Promise<void>(resolve => (reached = resolve))
+
+  tool(on, gate, reached)
+  const ui = await pane($, 'desktop')
+  const running = call($, { tool: 'Agent', description: 'help', prompt: 'help me', subagent_type: 'general-purpose' })
+
+  await inside
+  expect(await ui.find(text('SUPER MODE! me and 1 helper'))).toBeDefined()
+
+  release()
+  await running
+  expect(await ui.find(text(/SUPER MODE/))).toBeUndefined()
+})
+
+test('the stream passes through the monster untouched', async ($, on) => {
+  engine(on)
+  on('turn.step', async function* () {
+    yield { kind: 'text', index: 0, text: 'hello there' }
+    yield { kind: 'tool', index: 1, id: 'tu1', name: 'Bash' }
+    yield { kind: 'input', index: 1, json: '{"command":"ls"}', turnId: 't1' }
+
+    return { turnId: 't1', index: 0, answer: 'hello there', toolUses: [], stopReason: 'end_turn', usage: null }
+  } as never)
+
+  const seen: unknown[] = []
+  const stream = $.turn.step({ turnId: 't1', index: 0, model: 'm', messageCount: 1 })
+
+  for await (const chunk of stream) seen.push(chunk)
+
+  expect(seen).toEqual([
+    { kind: 'text', index: 0, text: 'hello there' },
+    { kind: 'tool', index: 1, id: 'tu1', name: 'Bash' },
+    { kind: 'input', index: 1, json: '{"command":"ls"}', turnId: 't1' },
+  ])
+  await stream.result
+})

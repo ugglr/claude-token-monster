@@ -14,16 +14,18 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | **Its face** | Its mood: hungry, happy, stuffed past 75%, dizzy eyes past 90% (time to `/compact`), a happy squint after a burp. |
 | **Tears, then sleepy Zs** | Tamagotchi hunger: sad after 15 minutes without tokens, starving after an hour. Feed it to cheer it up. |
 | **The glow around it** | Your session and weekly limits: green with room to spare, amber past 50%, pulsing red past 80%. It sweats when you get close. |
-| **Tokens flying into its mouth** | Claude is working. The color says which tool: green Bash, blue reads and searches, orange edits, purple web, pink agents, gold for thinking. |
+| **How hard it chews** | How fast tokens are flowing right now. It sits still when nothing streams, nibbles as Claude starts writing, and chomps, bounces and shakes as the rate climbs. |
+| **Tokens flying into its mouth** | The actual stream, piece by piece: gold for text, lilac for thinking, then by tool: green Bash, blue reads and searches, orange edits, purple web, pink agents. A big tool result is a big meal. |
 | **Looking down and drooling** | You are typing. Your prompt floats up into its mouth when you send it. |
-| **Mini monsters** | One per running subagent, background agents included. |
+| **"7 HITS"** | A combo: tool calls landing back to back, fighting game style. A turn that ends on a combo of three or more gets a **K.O.**; a failed tool call flashes **COUNTER**. |
+| **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 is over 9000. Its helpers bounce beside it. |
 | **Angry brows** | A tool just failed. |
 
 Under the sprite, a readout gives the exact numbers:
 
 ```
 om nom nom nom
-> Bash npm test
+> Bash Run the tests  4 HIT COMBO
 belly   ████████████░░░░░░░░  62% 124k/200k
 session ███████░░░░░░░░░░░░░  35% 2h14m
 weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h

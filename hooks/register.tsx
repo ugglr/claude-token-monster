@@ -4,7 +4,27 @@ import type { EngineInterface, Register, SessionContextUsage, Timer } from 'clau
 import type { Belly, Limit, Look } from '../types'
 import { OLD_DIET, label, registerDiet } from './diet'
 import { kilo } from './format'
-import { AMBER, BURP, MINUTE, PALETTE, RED, SAD, STARVING, encode, paint, step } from './paint'
+import {
+  AMBER,
+  BURP,
+  COMBO_GAP,
+  MINUTE,
+  PALETTE,
+  PROMPT,
+  RED,
+  SAD,
+  STARVING,
+  TEXT,
+  THINKING,
+  encode,
+  feed as serve,
+  finishTurn,
+  hit,
+  paint,
+  scene as newScene,
+  step,
+  toolColor,
+} from './paint'
 import type { Scene } from './paint'
 
 const PANE = 'token-monster'
@@ -95,27 +115,16 @@ const look = atom({ plugin: 'token-monster', key: 'look' } as const, { monster: 
 const now = atom({ plugin: 'token-monster', key: 'now' } as const, 0)
 const pantry = atom({ plugin: 'token-monster', key: 'pantry' } as const, [])
 const doing = atom({ plugin: 'token-monster', key: 'doing' } as const, '')
-// The diet's own value, read here for the readout; the state scan wants each atom in its file.
+// The diet's own values, read here for the readout; the state scan wants each atom in its file.
 const armed = atom({ plugin: 'token-monster', key: 'armed' } as const, [])
-// Which view the pane shows; the diet module draws 'diet' (see hooks/diet.tsx).
 const serving = atom({ plugin: 'token-monster', key: 'serving' } as const, 0)
+// The super mode level, 0 to 3: subagents running, plus one for three tools at once.
+const power = atom({ plugin: 'token-monster', key: 'power' } as const, 0)
+// Which view the pane shows; the diet module draws 'diet' (see hooks/diet.tsx).
 const view = atom({ plugin: 'token-monster', key: 'view' } as const, 'monster')
 
 // What the sprite animates from; the atoms above are what the readout draws.
-const scene: Scene = {
-  tick: 0,
-  at: 0,
-  belly: null,
-  look: { monster: 'cookie', color: 'blue' },
-  pantry: [],
-  busy: false,
-  tools: new Map(),
-  minions: 0,
-  typedAt: -100,
-  errorAt: -100,
-  queued: 0,
-  motes: [],
-}
+const scene: Scene = newScene({ monster: 'cookie', color: 'blue' })
 
 const after = (list: string[], at: string) => list[(list.indexOf(at) + 1) % list.length] ?? at
 const hex = (color: number) => `#${color.toString(16).padStart(6, '0')}`
@@ -210,13 +219,29 @@ const act = async ($: EngineInterface, text: string) => {
   await update($, doing, () => text)
 }
 
-const count = async ($: EngineInterface) => {
-  try {
-    scene.minions = (await $.agent.list()).filter(agent => agent.status === 'running').length
-  } catch {
-    // Unknown this time; the next poll tries again.
+// Agent tool calls in flight: a foreground subagent runs inside its call.
+let inflight = 0
+
+// Background agents outlive their tool call, so minions come from the agent list too.
+const rally = async ($: EngineInterface, isListed = false) => {
+  if (isListed) {
+    try {
+      const running = (await $.agent.list()).filter(agent => agent.status === 'running').length
+
+      scene.minions = Math.max(inflight, running)
+    } catch {
+      // Unknown this time; the next poll tries again.
+    }
+  } else {
+    scene.minions = Math.max(inflight, scene.minions)
   }
+
+  scene.level = Math.min(3, scene.minions + (scene.tools.size >= 3 ? 1 : 0))
+  await update($, power, last => (last === scene.level ? last : scene.level))
 }
+
+// Rough tokens in a piece of text, about four characters each.
+const tokens = (text: string | undefined) => Math.ceil((text?.length ?? 0) / 4)
 
 const restyle = async ($: EngineInterface, change: (current: Look) => Look) => {
   scene.look = await update($, look, change)
@@ -239,10 +264,17 @@ const frame = async ($: EngineInterface) => {
 
   step(scene, canvas.columns, canvas.rows * 2)
 
-  // Background agents outlive their tool call, so minions come from the agent list.
-  if (scene.tick % 20 === 0) void count($)
+  if (scene.tick % 20 === 0) void rally($, true)
 
-  const lively = scene.busy || scene.motes.length > 0 || scene.tick - scene.typedAt < 15
+  const lively =
+    scene.busy ||
+    scene.heat > 0.02 ||
+    scene.power > 0.02 ||
+    scene.motes.length > 0 ||
+    scene.servings.length > 0 ||
+    scene.tick - scene.typedAt < 15 ||
+    scene.tick - scene.comboAt <= COMBO_GAP ||
+    (scene.finish !== null && scene.tick - scene.finish.at < 18)
 
   // Idle, a third of the frames is plenty for blinking and breathing.
   if (painting || (!lively && scene.tick % 3 !== 0)) return
@@ -340,15 +372,33 @@ export const register: Register = on => {
 
   on('prompt.edit', ($, e, next) => {
     scene.typedAt = scene.tick
-    scene.queued = Math.min(scene.queued + 1, 30)
+    serve(scene, 2, PROMPT, true, false)
 
     return next(e)
   })
 
   on('prompt.submit', ($, e, next) => {
-    scene.queued += 24
+    serve(scene, tokens(e.text), PROMPT, true)
 
     return next(e)
+  })
+
+  // The model's stream, main and subagents alike: every piece is tokens, and the
+  // monster eats them as they come. It only watches; every chunk goes on unchanged.
+  on('turn.step', async function* ($, e, next) {
+    const stream = next(e)
+    const names = new Map<number, string>()
+
+    for await (const chunk of stream) {
+      if (chunk.kind === 'text') serve(scene, tokens(chunk.text), TEXT)
+      if (chunk.kind === 'thinking') serve(scene, tokens(chunk.text), THINKING)
+      if (chunk.kind === 'tool') names.set(chunk.index, chunk.name)
+      if (chunk.kind === 'input') serve(scene, tokens(chunk.json), toolColor(names.get(chunk.index)))
+
+      yield chunk
+    }
+
+    return await stream.result
   })
 
   on('turn.start', async ($, e, next) => {
@@ -363,16 +413,30 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       scene.busy = false
       scene.tools.clear()
+      finishTurn(scene)
       await act($, '')
     }
+
+    await rally($, e.agentId !== undefined)
 
     return next(e)
   })
 
+  // Every tool result is a meal; the main loop's calls chain into combos and power up.
   on('tool.call', async ($, e, next) => {
-    if (e.agentId !== undefined) return next(e)
+    if (e.agentId !== undefined) {
+      const ran = await next(e)
+
+      serve(scene, tokens(ran.text), toolColor(e.tool))
+
+      return ran
+    }
+
+    const isAgent = e.tool === 'Agent'
 
     scene.tools.set(e.tool_use_id, e.tool)
+    if (isAgent) inflight += 1
+    await rally($)
     await act($, `${e.tool} ${label(e as unknown as Record<string, unknown>)}`.trim())
 
     try {
@@ -380,9 +444,14 @@ export const register: Register = on => {
 
       if (ran.isError === true) scene.errorAt = scene.tick
 
+      hit(scene, ran.isError === true)
+      serve(scene, tokens(ran.text), toolColor(e.tool))
+
       return ran
     } finally {
       scene.tools.delete(e.tool_use_id)
+      if (isAgent) inflight -= 1
+      await rally($, isAgent)
       await act($, [...scene.tools.values()].at(-1) ?? (scene.busy ? 'thinking...' : ''))
     }
   })
@@ -404,7 +473,21 @@ export const register: Register = on => {
     const dieting = (await read($, armed)).length
     const plate = await read($, serving)
     const { monster, color } = await read($, look)
-    const { eye, say } = feeling(full, at)
+    const level = await read($, power)
+    const helpers = Math.max(1, scene.minions)
+    const { eye, say } =
+      level === 0
+        ? feeling(full, at)
+        : {
+            eye: 'O',
+            say: [
+              '',
+              `SUPER MODE! me and ${helpers} helper${helpers === 1 ? '' : 's'}`,
+              'SUPER MODE 2!! power rising',
+              'SUPER MODE 3!!! power level over 9000',
+            ][level]!,
+          }
+    const combo = scene.combo >= 2 && scene.tick - scene.comboAt <= COMBO_GAP ? `  ${scene.combo} HIT COMBO` : ''
     const columns = Math.max(16, Math.min(48, e.props.bodyColumns))
     const width = Math.max(6, Math.min(BAR, columns - 23))
     const remark = larder(limits)
@@ -453,7 +536,7 @@ export const register: Register = on => {
         </Text>
         <Text dimColor>
           {activity !== ''
-            ? `> ${activity}`
+            ? `> ${activity}${combo}`
             : full.ate > 0
               ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
               : `fed ${span(at - full.fedAt)} ago`}
