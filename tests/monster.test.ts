@@ -3,24 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { createScene, finishTurn, hit, paint, startTurn, step } from '../hooks/paint'
 import type { On, SessionContextUsage } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-
-const SURFACES = ['terminal', 'desktop'] as const
-
-const pane = ($: Engine, surface: (typeof SURFACES)[number]) =>
-  $.ui.mount({
-    plugin: 'token-monster',
-    surface,
-    component: 'Pane',
-    requestId: 'token-monster',
-    props: {
-      title: 'Token Monster',
-      isFocused: true,
-      bodyColumns: 46,
-      placement: 'dock',
-      scroll: { offset: 0, bodyRows: 40 },
-      view: {},
-    },
-  })
+import { call, done, pane, SURFACES, text } from './harness'
 
 const engine = (on: On) => {
   on('session.measure', (_, e) => ({ changed: e.changed }))
@@ -40,8 +23,6 @@ const measure = ($: Engine, tokens: number | undefined, rateLimits: { kind: stri
     rateLimits,
     changed: rateLimits.length > 0 ? ['context', 'rateLimits'] : ['context'],
   })
-
-const text = (value: string | RegExp) => ({ type: 'Text', text: value })
 
 test('the readout shows the belly, its fill and the last bite, on every surface', async ($, on) => {
   engine(on)
@@ -193,15 +174,11 @@ test('/token-monster swaps by name and lists the options for an unknown word', a
     $.command.run({ command: 'token-monster', args, origin: 'user', presentation: { layout: 'fullscreen', columns: 200 } } as never)
 
   expect((await run('dragon')).text).toBe(
-    'Me not know dragon. Monsters: cookie, slime, ghost, gremlin. Colors: blue, cyan, green, yellow, magenta, red, white. Or: diet (or eat).',
+    'Me not know dragon. Monsters: cookie, slime, ghost, gremlin. Colors: blue, cyan, green, yellow, magenta, red, white. Or: diet (or eat), sound on|off.',
   )
   expect((await run('Gremlin GREEN')).text).toBe('Token Monster is hungry.')
   expect(await (await pane($, 'desktop')).find(text(' |  o   o  |'))).toBeDefined()
 })
-
-// $.tool.call's overloads are too deep for tsc over a loose argument; one plain signature.
-type Caller = { call: (input: Record<string, unknown>) => Promise<unknown> }
-const call = ($: Engine, input: Record<string, unknown>) => ($.tool as unknown as Caller).call(input)
 
 // Tools beneath the monster; with a gate, each call waits on it after saying it arrived.
 const tool = (on: On, gate?: Promise<void>, reached?: () => void) => {
@@ -220,8 +197,6 @@ const turns = (on: On) => {
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
 }
-
-const done = { answer: '', durationMs: 1, isAborted: false, reason: 'answer' as const }
 
 const latch = () => {
   let open = () => {}
@@ -268,11 +243,13 @@ test('a turn that landed a combo ends in a K.O., however long the answer took', 
   finishTurn(s)
   expect(s.finish?.text).toBe('K.O.')
 
+  // A turn whose hits never chain ends in a cheer, not a second K.O.
+  s.tick += 50
   startTurn(s)
   hit(s, false, 0)
   hit(s, false, 9000)
   finishTurn(s)
-  expect(s.finish?.text).toBe('K.O.')
+  expect(s.ended).toBe('cheer')
   expect(s.finish?.at).toBe(600)
 
   hit(s, true, 20_000)
@@ -507,15 +484,25 @@ test('a short pane gives the sprite only what the readout leaves, so the buttons
   engine(on)
   await measure($, 60_000, [{ kind: 'five_hour', percentUsed: 60 }, { kind: 'seven_day', percentUsed: 20 }])
 
-  const ui = await $.ui.mount({
-    plugin: 'token-monster',
-    surface: 'terminal',
-    component: 'Pane',
-    requestId: 'token-monster',
-    props: { title: 'Token Monster', isFocused: true, bodyColumns: 46, placement: 'dock', scroll: { offset: 0, bodyRows: 24 }, view: {} },
-  })
+  const ui = await pane($, 'terminal', { bodyRows: 24 })
 
   // say, activity, belly, two limits, the level, the pantry remark, two button rows: 9 lines.
   expect((await ui.find({ type: 'Raster' }))?.props).toMatchObject({ rows: 14 })
   expect(await ui.find({ key: 'sound' })).toBeDefined()
+})
+
+test('a subagent starting mid-turn keeps the main turn combo', async ($, on) => {
+  const clock = engine(on)
+
+  tool(on)
+  turns(on)
+  const ui = await pane($, 'desktop')
+
+  await $.turn.start({ text: 'go', turnId: 'main' })
+  for (let i = 0; i < 3; i++) {
+    await call($, { tool: 'Read', file_path: `f${i}.ts` })
+    await clock.advance(1000)
+  }
+  await $.turn.start({ text: 'help', turnId: 'sub' })
+  expect(await ui.find(text(/on fire x3/))).toBeDefined()
 })

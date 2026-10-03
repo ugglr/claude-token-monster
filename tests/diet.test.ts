@@ -3,6 +3,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
 import { stubbed, withMedia } from '../hooks/diet'
+import { pane, run } from './harness'
 
 const ROWS = [
   { role: 'user' as const, text: 'look around', toolUses: [] },
@@ -44,17 +45,9 @@ const menu = (on: On, api: { role: string; content: { type: string; [field: stri
   on('ui.open', () => ({ value: { isPlaced: true } }))
 }
 
-const mountDiet = ($: Engine, surface: 'terminal' | 'desktop') =>
-  $.ui.mount({
-    plugin: 'token-monster',
-    surface,
-    component: 'Pane',
-    requestId: 'token-monster',
-    props: { title: 'Token Monster', isFocused: true, bodyColumns: 48, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
-  })
+const mountDiet = ($: Engine, surface: 'terminal' | 'desktop') => pane($, surface, { bodyColumns: 48, bodyRows: 30 })
 
-const openDiet = ($: Engine, args = 'diet') =>
-  $.command.run({ command: 'token-monster', args, origin: 'user', presentation: { layout: 'fullscreen', columns: 200 } } as never)
+const openDiet = ($: Engine, args = 'diet') => run($, args)
 
 test('the diet lists tool results biggest first and picks one', async ($, on) => {
   menu(on)
@@ -196,12 +189,6 @@ test('an armed /compact after the armed results are gone is an ordinary /compact
 
   await $.session.compact({ trigger: 'manual', messages: summary })
   expect(calls.summarized).toBe(1)
-})
-
-test('the main readout says when the diet is armed', async ($, on) => {
-  const { ui } = await arm($, on)
-
-  expect(await ui.find({ type: 'Text', text: 'eating ~10k tokens from the context on your next /compact' })).toBeDefined()
 })
 
 test('any /compact sends the pane back to the monster', async ($, on) => {

@@ -3,25 +3,10 @@ import { expect, mock, test } from 'claude-code/testing'
 import { createScene, fondness, perk, pet, startTurn, step, typed } from '../hooks/paint'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
+import { pane, SURFACES, text } from './harness'
 
-const SURFACES = ['terminal', 'desktop'] as const
+// The canvas the pure tests step the scene on.
 const [W, H] = [56, 40]
-
-const pane = ($: Engine, surface: (typeof SURFACES)[number]) =>
-  $.ui.mount({
-    plugin: 'token-monster',
-    surface,
-    component: 'Pane',
-    requestId: 'token-monster',
-    props: {
-      title: 'Token Monster',
-      isFocused: true,
-      bodyColumns: 46,
-      placement: 'dock',
-      scroll: { offset: 0, bodyRows: 40 },
-      view: {},
-    },
-  })
 
 const engine = (on: On) => {
   on('session.measure', (_, e) => ({ changed: e.changed }))
@@ -29,8 +14,6 @@ const engine = (on: On) => {
 
   return mock.clock(on)
 }
-
-const text = (value: string | RegExp) => ({ type: 'Text', text: value })
 
 // A fed monster with nothing going on.
 const idle = () => {
@@ -144,4 +127,14 @@ test('typing after a long quiet earns a wave hello, once', () => {
   expect(typed(s)).toBe(true)
   expect(s.greetAt).toBe(s.tick)
   expect(typed(s)).toBe(false)
+})
+
+test('a starving monster that has been quiet for long pleads; it is not asleep', () => {
+  const s = createScene({ monster: 'cookie', color: 'blue' })
+
+  s.at = 3 * 60 * 60_000
+  s.belly = { percent: 30, fill: 30, tokens: 1, window: 1, ate: 0, fedAt: 0, burpAt: null, known: true, compactAt: null }
+  s.tick = 5000
+  s.activeAt = 0
+  expect(pet(s, s.at)).toBe('plead')
 })

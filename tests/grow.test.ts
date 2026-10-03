@@ -4,24 +4,7 @@ import { levelOf, xpFor } from '../hooks/grow'
 import { EGG, createScene, hatch, hatching, levelUp, serve, step } from '../hooks/paint'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-
-const pane = ($: Engine, surface: 'terminal' | 'desktop') =>
-  $.ui.mount({
-    plugin: 'token-monster',
-    surface,
-    component: 'Pane',
-    requestId: 'token-monster',
-    props: {
-      title: 'Token Monster',
-      isFocused: true,
-      bodyColumns: 46,
-      placement: 'dock',
-      scroll: { offset: 0, bodyRows: 40 },
-      view: {},
-    },
-  })
-
-const text = (value: string | RegExp) => ({ type: 'Text', text: value })
+import { call, done, pane, text } from './harness'
 
 // A session beneath the monster: a store holding `saved` (the map is the store, for
 // the test to read and write), a clock, tools and turns.
@@ -53,11 +36,6 @@ const session = (on: On, saved: Record<string, unknown> = {}) => {
 const start = ($: Engine) => $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true } as never)
 
 // $.tool.call's overloads are too deep for tsc over a loose argument; one plain signature.
-type Caller = { call: (input: Record<string, unknown>) => Promise<unknown> }
-const call = ($: Engine, input: Record<string, unknown>) => ($.tool as unknown as Caller).call(input)
-
-const done = { answer: '', durationMs: 1, isAborted: false, reason: 'answer' as const }
-
 test('the level curve: quick at first, then slower', () => {
   expect(xpFor(1)).toBe(0)
   expect(xpFor(2)).toBe(20_000)
@@ -75,10 +53,12 @@ test('the level curve: quick at first, then slower', () => {
   expect(xpFor(3)).toBeLessThan(100_000)
   expect(xpFor(10)).toBeGreaterThan(2_000_000)
   expect(xpFor(25)).toBeGreaterThan(20_000_000)
-  expect(levelOf(1e12)).toBe(99)
+  // No cap: past any level there is a next one, so the readout always has a way to go.
+  expect(levelOf(1e12)).toBeGreaterThan(99)
+  expect(xpFor(levelOf(1e12) + 1)).toBeGreaterThan(xpFor(levelOf(1e12)))
 })
 
-test('what it eats is banked in the store at the end of a turn, and every 30 seconds in a long one', async ($, on) => {
+test('what it eats is banked in the store at the end of each turn, and every 30 seconds in a long one', async ($, on) => {
   const { clock, store } = session(on, { xp: 1000 })
 
   await start($)
@@ -100,10 +80,10 @@ test('what it eats is banked in the store at the end of a turn, and every 30 sec
   await clock.advance(30_000)
   expect(store.get('xp')).toBe(5100)
 
-  // A turn ending soon after a write leaves the next to the clock.
+  // A turn's end banks at once, and nothing is banked twice.
   await call($, { tool: 'Read', file_path: 'e.ts' })
   await $.turn.complete({ ...done, turnId: 't2' })
-  expect(store.get('xp')).toBe(5100)
+  expect(store.get('xp')).toBe(5200)
   await clock.advance(30_000)
   expect(store.get('xp')).toBe(5200)
 })
@@ -139,7 +119,7 @@ test('crossing a level says so, and names what it got', async ($, on) => {
   expect(await (await pane($, 'desktop')).find({ type: 'Box', text: /^Lv 3 / })).toBeDefined()
 })
 
-test('a new session hatches from an egg once; a hot reload does not hatch it again', async ($, on) => {
+test('a new session hatches from an egg once; starting the session again does not hatch it again', async ($, on) => {
   const { clock, store } = session(on)
 
   await start($)
@@ -151,7 +131,7 @@ test('a new session hatches from an egg once; a hot reload does not hatch it aga
   await clock.advance(5000)
   expect(await ui.find(text(/crack/))).toBeUndefined()
 
-  // The same session started again, as a reload would: $.state remembers its birthday.
+  // session.start again (a reload does this too): $.state remembers its birthday.
   await start($)
   await clock.advance(300)
   expect(await ui.find(text(/crack/))).toBeUndefined()
@@ -192,4 +172,13 @@ test('the scene hatches once, in time, and a first reading of the level is no le
   serve(s, 120, 0xffffff)
   serve(s, 40, 0xffffff, false)
   expect(s.eaten).toBe(120)
+})
+
+test('a monster past level 99 still draws its readout', async ($, on) => {
+  session(on, { xp: 2e12 })
+  await start($)
+
+  const ui = await pane($, 'desktop')
+
+  expect(await ui.find({ type: 'Box', text: /^Lv \d{3,} +━*─+ [\d.]+[kM] to Lv \d+$/ })).toBeDefined()
 })

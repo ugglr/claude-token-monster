@@ -54,7 +54,7 @@ def pulse(phase, dt, duty):
     return v - (2 * duty - 1)  # a narrow pulse sits off center; put it back on zero
 
 
-def triangle(phase, dt, _duty):
+def triangle(phase):
     # Sixteen steps, as the old chips had it: the slight grit is the point.
     v = 4 * abs(phase - 0.5) - 1
     return round(v * 7.5) / 7.5
@@ -93,7 +93,7 @@ def voice(dur, freq, amp, wave='pulse', duty=0.5, seed=1):
             d = duty(t) if callable(duty) else duty
             out[i] = pulse(phase, dt, d) * amp(t)
         else:
-            out[i] = triangle(phase, dt, 0) * amp(t)
+            out[i] = triangle(phase) * amp(t)
         phase = (phase + dt) % 1.0
     return out
 

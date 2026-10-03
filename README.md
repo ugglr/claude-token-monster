@@ -2,7 +2,7 @@
 
 [![Dad approved](https://img.shields.io/badge/Dad-approved-brightgreen)](https://github.com/ugglr/dad)
 
-A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your tokens. It is also a dashboard: one glance at the monster tells you how full your context is, how close you are to your limits, and what Claude is doing right now.
+A pixel-art virtual pet that lives in a side pane of Claude Code and eats your tokens. It is also a dashboard: one glance at the monster tells you how full your context is, how close you are to your limits, and what Claude is doing right now.
 
 ![Token Monster eating through a session](media/demo.gif)
 
@@ -14,7 +14,7 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | --- | --- |
 | **Its size** | How full the context window is. The belly inflates as the context fills. |
 | **Its face** | Its mood: hungry, happy, stuffed past 75%, dizzy eyes past 90% (time to `/compact`), a happy squint after a burp. These go by the point where Claude Code auto-compacts, which comes well before the window is full; the belly bar shows the full window. |
-| **Tears, then a grey droop** | Tamagotchi hunger: sad after 15 minutes without tokens, starving and greying after an hour. A hungry monster does not doze off. Feed it to cheer it up. |
+| **Tears, then a grey droop** | Virtual-pet hunger: sad after 15 minutes without tokens, starving and greying after an hour. A hungry monster does not doze off. Feed it to cheer it up. |
 | **The glow around it** | Your session and weekly limits: green with room to spare, amber past 50%, pulsing red past 80%. It sweats when you get close. |
 | **How hard it chews** | How fast tokens are flowing right now. It sits still when nothing streams, nibbles as Claude starts writing, and shovels food in with both hands, bouncing and shaking, as the rate climbs. Crumbs fly. |
 | **Tokens flying into its mouth** | The actual stream, piece by piece: gold for text, lilac for thinking, then by tool: green Bash, blue reads and searches, orange edits, purple web, pink agents. A big tool result is a big meal. |
@@ -27,7 +27,7 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | **A yawn, then sleep** | Nothing has happened for three minutes and it is well fed. It wakes when you start typing. |
 | **The sky** | Your local time: dawn, day with drifting clouds, dusk, and night with the moon, stars, the odd shooting star and fireflies. |
 | **Frenzy** | Everything at once: the token rate pegged and subagents running. Tokens pour in from every edge and swirl into its mouth, speed lines burst out, the sky strobes, the picture shakes and splits into red and blue, its body cycles through every color, its eyes spin and its arms flail, and its helpers sprint laps around it. It calms down as the rate drops. |
-| **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 is over 9000. Each subagent shows up as a little helper in its own color that dances beside it and runs over now and then to toss a token into its mouth. A belly about to burst or a limit past 80% still shows through. |
+| **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 maxes out. Each subagent shows up as a little helper in its own color that dances beside it and runs over now and then to toss a token into its mouth. A belly about to burst or a limit past 80% still shows through. |
 
 Under the sprite, a readout gives the exact numbers:
 
@@ -37,7 +37,7 @@ om nom nom nom
 belly   ████████████░░░░░░░░  62% 124k/200k
 session ███████░░░░░░░░░░░░░  35% 2h14m
 weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
-Lv 7    ━━━━━━━━━─────────── 912k to Lv 8
+Lv 7    ━━━━━━━━━─────────── 212k to Lv 8
 m: Monster  c: Color  p: Pet
 d: Diet: free context  s: Sound: off
 ```
@@ -88,7 +88,7 @@ Sound is off by default. Press `s` in the pane, or run `/token-monster sound on`
 
 It plays on macOS only, through `afplay`. A Linux or Windows terminal has no player, so it stays silent there.
 
-The sounds are original, made for this mod by [`scripts/make-sounds.py`](scripts/make-sounds.py) from square, triangle and noise waves, with the Python standard library only. Run `python3 scripts/make-sounds.py` to make them again, or add `--check` to print each one's length and peak level.
+The sounds are original, made for this mod by [`scripts/make-sounds.py`](scripts/make-sounds.py) from pulse, triangle and noise waves, with the Python standard library only. Run `python3 scripts/make-sounds.py` to make them again, or add `--check` to print each one's length and peak level, or `--png DIR` to draw each waveform (macOS, with `sips`).
 
 ## Requirements
 
@@ -162,17 +162,19 @@ Mods are not sandboxed, so read the code before you install any mod. Here is eve
 
 - **The model's response stream**, as it arrives, for the main conversation and every subagent: text, thinking, and the arguments of each tool call. It measures their length to animate the monster and keeps nothing.
 - **The text of each prompt you send**, and **each tool result**, subagents' included, measured the same way.
-- **The context, limit and cost figures** Claude Code already shows in its status line.
+- **The context, limit and cost figures** Claude Code already shows in its status line, and **the context broken down by category** as `/context` shows it, with the point where auto-compaction runs. Both come from a local estimate; reading them sends no request.
+- **The list of running subagents**, to count its helpers.
+- **The `COLORTERM` environment variable**, to tell whether your terminal shows 24-bit color or should get colors picked from the 256-color palette.
 - **Each tool call's name and its file path, description, command, URL, search pattern or query, or prompt**, shown in the readout and kept in the diet's list for the session.
 - **Your prompt while you type it**, only to notice that you are typing.
 - **The conversation's tool results**, when you open the diet, to list them; and on a diet `/compact`, the conversation, to replace the results you picked.
 
-It stores only your monster and color choice, whether sound is on, and the number of tokens it has eaten, and sends nothing anywhere: there is no network call in the code.
+It stores, in Claude Code's plugin store: your monster and color choice, the number of tokens it has eaten (its levels), whether sound is on, and whether you have seen the sound tip. Sound plays by having Claude Code run `afplay` on macOS. It sends nothing anywhere: there is no network call in the code.
 
 ## How it was built
 
 - **Model:** built with Claude Opus 5.5 in Claude Code, using the `plugin-authoring` skill and the mod API's TypeScript types. The mod itself never calls a model.
-- **Prompts:** it started as one line: a monster, a play on a certain cookie-loving puppet, that eats tokens and shows how full the context is. Then, in turn: a side pane with an animated monster; swapping monsters and colors; Tamagotchi sadness when unfed; the session and weekly limits; deleting chosen things from the context, "because today we can only clear or compact"; nicer monsters to screencap; idle when nothing flows and more intense as tokens flow; subagents as a super-hero power-up; fighting game combos.
+- **Prompts:** it started as one line: a monster, a play on a certain cookie-loving puppet, that eats tokens and shows how full the context is. Then, in turn: a side pane with an animated monster; swapping monsters and colors; virtual-pet sadness when unfed; the session and weekly limits; deleting chosen things from the context, "because today we can only clear or compact"; nicer monsters to screencap; idle when nothing flows and more intense as tokens flow; subagents as a super-hero power-up; fighting game combos.
 - **Review:** every change went through [Dad](https://github.com/ugglr/dad), an old-school code review agent, until it passed. Most of the iterations below were his finds.
 - **Iterations:**
   - The first diet called `$.session.compact()` itself. A mod's own call skips that mod's hooks, so the diet could never answer it and Claude Code would have summarized everything while the toast said "Me ate". The diet now only arms itself and puts `/compact` in your prompt; your `/compact` is the one it answers.
@@ -191,7 +193,7 @@ It stores only your monster and color choice, whether sound is on, and the numbe
 - Combos break after a 4 second pause. The sky goes by the clock of the machine Claude Code runs on. Super mode counts running subagents from the agent list, so it can take a moment to power down after a background agent finishes.
 - The animation, combo and fondness state live in memory and start over when the mod reloads; your monster, color and level are kept. The antics and the hello only run while the pixel art is drawing. Eaten tokens are written to the store at most every 30 seconds, so a reload can lose up to that much.
 - The level counts the same estimate the animation does, at about four characters a token, not your bill.
-- Tested with 61 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
+- Tested with 63 tests run by `claude plugin test`, and live in one long session, including a real diet meal. Petting, levels and sound were tested in the test kit and in rendered frames, not yet in a live session. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
 
 ## Dependencies
 
@@ -201,7 +203,7 @@ It stores only your monster and color choice, whether sound is on, and the numbe
 
 ## Third-party notices
 
-Cookie Monster is a trademark of Sesame Workshop. Dragon Ball and Super Saiyan are trademarks of their owners (Bird Studio, Shueisha, Toei Animation). Street Fighter is a trademark of Capcom. They are named only as inspiration; this project is not affiliated with or endorsed by any of them.
+Cookie Monster is a trademark of Sesame Workshop. Tamagotchi is a trademark of Bandai. Dragon Ball and Super Saiyan are trademarks of their owners (Bird Studio, Shueisha, Toei Animation). Street Fighter is a trademark of Capcom. They are named only as inspiration; this project is not affiliated with or endorsed by any of them.
 
 ## License
 

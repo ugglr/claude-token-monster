@@ -5,7 +5,6 @@
 // The step from level n to n + 1 takes STEP * n^1.6 tokens: level 2 at 20k, level 3
 // at about 80k (an hour or so of work), level 10 at 2.7M, level 25 at about 30M.
 const STEP = 20_000
-const MAX = 99
 
 const cost = (level: number) => Math.round(STEP * level ** 1.6)
 
@@ -13,7 +12,7 @@ const cost = (level: number) => Math.round(STEP * level ** 1.6)
 export const xpFor = (level: number) => {
   let total = 0
 
-  for (let n = 1; n < Math.min(level, MAX); n++) total += cost(n)
+  for (let n = 1; n < level; n++) total += cost(n)
 
   return total
 }
@@ -21,7 +20,7 @@ export const xpFor = (level: number) => {
 export const levelOf = (tokens: number) => {
   let [level, need] = [1, cost(1)]
 
-  while (level < MAX && tokens >= need) {
+  while (tokens >= need) {
     level += 1
     need += cost(level)
   }

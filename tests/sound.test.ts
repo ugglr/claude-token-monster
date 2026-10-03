@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
+import { call, done, pane, run } from './harness'
 
 // The world beneath the monster with a speaker in it: every clip asked for is recorded.
 const world = (on: On, stored: Record<string, unknown> = {}, isShown = () => true) => {
@@ -61,23 +62,7 @@ let gate: Promise<void> | undefined
 let pieces = 0
 let reached: (() => void) | undefined
 
-const pane = ($: Engine) =>
-  $.ui.mount({
-    plugin: 'token-monster',
-    surface: 'desktop',
-    component: 'Pane',
-    requestId: 'token-monster',
-    props: { title: 'Token Monster', isFocused: true, bodyColumns: 46, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
-  })
-
-const run = ($: Engine, args: string) =>
-  $.command.run({ command: 'token-monster', args, origin: 'user', presentation: { layout: 'fullscreen', columns: 200 } } as never)
-
-type Caller = { call: (input: Record<string, unknown>) => Promise<unknown> }
-const call = ($: Engine, input: Record<string, unknown>) => ($.tool as unknown as Caller).call(input)
 const read = ($: Engine, file_path: string) => call($, { tool: 'Read', file_path })
-
-const done = { answer: '', durationMs: 1, isAborted: false, reason: 'answer' as const }
 
 const measure = ($: Engine, tokens: number) =>
   $.session.measure({ context: { tokens, window: 200_000, percent: Math.round(tokens / 2000) }, rateLimits: [], changed: ['context'] })
@@ -199,6 +184,18 @@ test('with sound on, each moment plays its own clip, quietly', async ($, on) => 
     'sounds/ko.wav',
   ])
 
+  // An interrupted turn plays neither a K.O. nor a cheer, whatever its chain.
+  await clock.advance(10_000)
+  await $.turn.start({ text: 'go', turnId: 'tx' })
+  await read($, 'a.ts')
+  await clock.advance(1000)
+  await read($, 'b.ts')
+  await clock.advance(1000)
+  await read($, 'c.ts')
+  played.length = 0
+  await $.turn.complete({ ...done, turnId: 'tx', isAborted: true, reason: 'aborted' })
+  expect(played.splice(0)).toEqual([])
+
   // A big result is gulped, a failed call buzzes, a plain turn ends in a cheer.
   await clock.advance(10_000)
   await $.turn.start({ text: 'go', turnId: 't2' })
@@ -238,31 +235,20 @@ test('super mode powers up with a helper and down after it', async ($, on) => {
   expect(played.slice(1, 2)).toEqual(['sounds/power-down.wav'])
 })
 
-test('a hungry monster whimpers once, and an idle one snores now and then', async ($, on) => {
+// Snoring follows the sprite's own sleep rule, counted in animation frames (unit-tested
+// in monster.test.ts); here, with no frames drawn, only the hunger side shows.
+test('a hungry monster whimpers once, and does not snore', async ($, on) => {
   const { clock, played } = world(on, { soundHeard: true })
 
   await run($, 'sound on')
   await measure($, 20_000)
   played.length = 0
 
-  await clock.advance(4 * 60_000)
-  await measure($, 20_000)
-  expect(played.splice(0)).toEqual(['sounds/snore.wav'])
-
-  await clock.advance(60_000)
-  await measure($, 20_000)
-  expect(played.splice(0)).toEqual([])
-
-  // Hungry from 15 minutes: one whimper, then the snores again, ten minutes apart.
-  await clock.advance(11 * 60_000)
+  await clock.advance(16 * 60_000)
   await measure($, 20_000)
   expect(played.splice(0)).toEqual(['sounds/whimper.wav'])
 
-  await clock.advance(60_000)
-  await measure($, 20_000)
-  expect(played.splice(0)).toEqual(['sounds/snore.wav'])
-
-  await clock.advance(5 * 60_000)
+  await clock.advance(30 * 60_000)
   await measure($, 20_000)
   expect(played.splice(0)).toEqual([])
 })

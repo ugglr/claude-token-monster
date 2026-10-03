@@ -3,7 +3,7 @@ import type { EngineInterface, Register, SessionContextUsage, Timer } from 'clau
 
 import type { Belly, Limit, Look, Slice } from '../types'
 import { OLD_DIET, label, registerDiet } from './diet'
-import { PANE, PANE_OPEN, isDietWord, kilo, tokens } from './format'
+import { PANE, PANE_OPEN, isDietWord, isSoundWord, kilo, tokens } from './format'
 import { levelOf, xpFor } from './grow'
 import {
   AMBER,
@@ -38,7 +38,7 @@ import {
   typed,
 } from './paint'
 import type { Fuss, Scene } from './paint'
-import { isSoundWord, registerSound } from './sound'
+import { registerSound } from './sound'
 
 const FPS = 10
 const BAR = 20
@@ -168,9 +168,6 @@ const bar = (percent: number, width: number) => {
 }
 const barColor = (percent: number) => (percent >= RED ? 'red' : percent >= AMBER ? 'yellow' : 'green')
 
-// Tamagotchi rules: a full belly beats everything, then hunger, then a burp, then how full it is.
-// Moods go by `fill`, the share of the auto-compact point: that is when the context
-// actually gets summarized, usually well before the window is full.
 // What a limit is called in the readout and the band.
 const limitName = (kind: string) => WINDOWS[kind] ?? kind.slice(0, 7)
 
@@ -187,10 +184,13 @@ const voice = (full: Belly, at: number, power: number, helpers: number) =>
           '',
           helpers === 0 ? 'SUPER MODE! three tools at once' : `SUPER MODE! me and ${helpers} helper${helpers === 1 ? '' : 's'}`,
           'SUPER MODE 2!! power rising',
-          'SUPER MODE 3!!! power level over 9000',
+          'SUPER MODE 3!!! power maxed out',
         ][power]!,
       }
 
+// Its moods: a full belly beats everything, then hunger, then a burp, then how full it is.
+// They go by `fill`, the share of the auto-compact point: that is when the context
+// actually gets summarized, usually well before the window is full.
 const feeling = ({ fill: percent, fedAt, burpAt }: Belly, at: number) => {
   const idle = at - fedAt
 
@@ -278,7 +278,11 @@ const sliceLook = (name: string) => {
 // The belly bar split by category: whole cells by largest remainder, so the
 // parts always add up to the bar.
 const stack = (rows: readonly Slice[], window: number, width: number) => {
-  const parts = rows.filter(row => row.kind !== 'free').map(row => ({ row, exact: (row.tokens / window) * width }))
+  // The categories are estimates and can add up to more than the window: then they
+  // share the bar rather than run past it.
+  const sum = rows.filter(row => row.kind !== 'free').reduce((total, row) => total + row.tokens, 0)
+  const scale = (Math.min(1, window / Math.max(1, sum)) * width) / window
+  const parts = rows.filter(row => row.kind !== 'free').map(row => ({ row, exact: row.tokens * scale }))
   const cells = parts.map(part => Math.floor(part.exact))
   const room = Math.min(width, Math.round(parts.reduce((sum, part) => sum + part.exact, 0)))
   const order = parts.map((part, i) => [part.exact - Math.floor(part.exact), i] as const).sort((a, b) => b[0] - a[0])
@@ -417,32 +421,35 @@ const BANK_MS = 30_000
 let banked = 0
 let bankedAt = -Infinity
 
-const bank = async ($: EngineInterface, isDue = true) => {
+const bank = async ($: EngineInterface) => {
+  // Claimed before any await, so the timer and another caller never bank the same tokens.
   const fresh = scene.eaten - banked
-  const at = await $.clock.now()
 
-  if (fresh <= 0 || (!isDue && at - bankedAt < BANK_MS)) return
+  if (fresh <= 0) return
 
   banked = scene.eaten
-  bankedAt = at
+
+  let total: number
 
   try {
     // Read back first: another session may have banked its own meals meanwhile.
-    const total = (Number(await $.store.get('xp')) || 0) + fresh
-    const was = scene.rank
-
+    total = (Number(await $.store.get('xp')) || 0) + fresh
     await $.store.set('xp', total)
-    await update($, xp, () => total)
-    levelUp(scene, levelOf(total))
-
-    if (was > 0 && scene.rank > was) {
-      const gift = WARDROBE.find(one => one.level === scene.rank)
-
-      $.ui.toast(`Token Monster grew to Lv ${scene.rank}${gift === undefined ? '!' : ` and got ${gift.part}!`}`)
-    }
   } catch {
     // Not banked; the next try takes these tokens too.
     banked -= fresh
+    return
+  }
+
+  const was = scene.rank
+
+  await update($, xp, () => total)
+  levelUp(scene, levelOf(total))
+
+  if (was > 0 && scene.rank > was) {
+    const gift = WARDROBE.find(one => one.level === scene.rank)
+
+    $.ui.toast(`Token Monster grew to Lv ${scene.rank}${gift === undefined ? '!' : ` and got ${gift.part}!`}`)
   }
 }
 
@@ -540,11 +547,15 @@ export const register: Register = on => {
     pulse?.cancel()
     pulse = $.clock.every(MINUTE, () => void tick($))
     await wake($)
+    // A hot reload drops the timers that would clear these: start them clear.
+    await update($, egg, () => false)
+    await update($, chat, () => null)
+    await update($, combo, () => 0)
     saver?.cancel()
     saver = $.clock.every(BANK_MS, () => void bank($))
     await $.command.register({
       name: 'token-monster',
-      description: 'Open the Token Monster pane, swap its monster and color, or put it on a diet',
+      description: 'Open the Token Monster pane, swap its monster and color, put it on a diet, or turn sound on or off',
       argumentHint: `[${NAMES.join('|')}] [color] | diet | eat | sound on|off`,
     })
     await update($, view, () => 'monster')
@@ -564,7 +575,7 @@ export const register: Register = on => {
 
     if (unknown.length > 0) {
       return {
-        text: `Me not know ${unknown.join(', ')}. Monsters: ${NAMES.join(', ')}. Colors: ${COLORS.join(', ')}. Or: diet (or eat).`,
+        text: `Me not know ${unknown.join(', ')}. Monsters: ${NAMES.join(', ')}. Colors: ${COLORS.join(', ')}. Or: diet (or eat), sound on|off.`,
       }
     }
 
@@ -599,9 +610,10 @@ export const register: Register = on => {
   })
 
   registerDiet(on)
-  registerSound(on)
+  registerSound(on, scene)
 
   on('prompt.edit', async ($, e, next) => {
+    scene.typedMs = await $.clock.now()
     // Back after a long quiet: it waves hello before it rubs its hands.
     if (typed(scene)) await reply($, '^', 'oh hi! you back!')
     serve(scene, 2, PROMPT, false)
@@ -632,10 +644,15 @@ export const register: Register = on => {
     }
   })
 
+  // turn.start carries no agent id: a turn starting while the main one runs is a
+  // subagent's, and must not reset the main turn's combo.
   on('turn.start', async ($, e, next) => {
-    startTurn(scene)
-    await update($, combo, () => 0)
-    await act($, 'thinking...')
+    if (!scene.busy) {
+      startTurn(scene)
+      await update($, combo, () => 0)
+      await act($, 'thinking...')
+    }
+
     await rally($, true)
 
     return next(e)
@@ -647,7 +664,7 @@ export const register: Register = on => {
       finishTurn(scene, e.isAborted)
       await update($, combo, () => 0)
       await act($, '')
-      await bank($, false)
+      await bank($)
     }
 
     await rally($, true)
