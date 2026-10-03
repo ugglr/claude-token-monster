@@ -24,6 +24,7 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | **A wave hello** | You started typing after two quiet minutes. |
 | **A yawn, then sleep** | Nothing has happened for three minutes and it is well fed. It wakes when you start typing. |
 | **The sky** | Your local time: dawn, day with drifting clouds, dusk, and night with the moon, stars, the odd shooting star and fireflies. |
+| **Frenzy** | Everything at once: the token rate pegged and subagents running. Tokens pour in from every edge and swirl into its mouth, speed lines burst out, the sky strobes, the picture shakes and splits into red and blue, its body cycles through every color, its eyes spin and its arms flail, and its helpers sprint laps around it. It calms down as the rate drops. |
 | **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 is over 9000. Each subagent shows up as a little helper in its own color that dances beside it and runs over now and then to toss a token into its mouth. A belly about to burst or a limit past 80% still shows through. |
 
 Under the sprite, a readout gives the exact numbers:
@@ -35,8 +36,8 @@ belly   ████████████░░░░░░░░  62% 124k/2
 session ███████░░░░░░░░░░░░░  35% 2h14m
 weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
 Lv 7    ━━━━━━━━━─────────── 912k to Lv 8
-m: Monster  c: Color  d: Diet: free context  p: Pet
-s: Sound: off
+m: Monster  c: Color  p: Pet
+d: Diet: free context  s: Sound: off
 ```
 
 ![Every monster and mood](media/moods.png)
@@ -188,7 +189,7 @@ It stores only your monster and color choice, whether sound is on, and the numbe
 - Combos break after a 4 second pause. The sky goes by the clock of the machine Claude Code runs on. Super mode counts running subagents from the agent list, so it can take a moment to power down after a background agent finishes.
 - The animation, combo and fondness state live in memory and start over when the mod reloads; your monster, color and level are kept. The antics and the hello only run while the pixel art is drawing. Eaten tokens are written to the store at most every 30 seconds, so a reload can lose up to that much.
 - The level counts the same estimate the animation does, at about four characters a token, not your bill.
-- Tested with 60 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
+- Tested with 61 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
 
 ## Dependencies
 

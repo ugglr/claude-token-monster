@@ -502,3 +502,20 @@ test('the belly bar is stacked by category, with a legend biggest first and the 
   expect(belly?.children.filter(child => (child as { type?: string }).type === 'Text').length).toBe(7)
   expect((await ui.find({ type: 'Box', text: /^■ messages/ }))?.text).toBe('■ messages 70k  ■ tools 20k  ■ system 10k  ▒ reserve 33k  ')
 })
+
+test('a short pane gives the sprite only what the readout leaves, so the buttons stay on screen', async ($, on) => {
+  engine(on)
+  await measure($, 60_000, [{ kind: 'five_hour', percentUsed: 60 }, { kind: 'seven_day', percentUsed: 20 }])
+
+  const ui = await $.ui.mount({
+    plugin: 'token-monster',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'token-monster',
+    props: { title: 'Token Monster', isFocused: true, bodyColumns: 46, placement: 'dock', scroll: { offset: 0, bodyRows: 24 }, view: {} },
+  })
+
+  // say, activity, belly, two limits, the level, the pantry remark, two button rows: 9 lines.
+  expect((await ui.find({ type: 'Raster' }))?.props).toMatchObject({ rows: 14 })
+  expect(await ui.find({ key: 'sound' })).toBeDefined()
+})

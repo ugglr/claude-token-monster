@@ -792,10 +792,47 @@ export const register: Register = on => {
     const pie = await read($, slices)
     const layers = stack(pie, full.window || 1, width)
     // Biggest first; free space is the empty part of the bar, not a legend entry.
-    const legend = pie
-      .filter(row => row.kind !== 'free')
-      .map(row => ({ ...sliceLook(row.name), kind: row.kind, tokens: row.tokens }))
-      .sort((a, b) => (a.kind === 'buffer' ? 1 : b.kind === 'buffer' ? -1 : b.tokens - a.tokens))
+    // Categories sharing a color merge (two MCP rows are one "mcp"); the five biggest
+    // show, then the reserve.
+    const merged = new Map<string, { color: string; short: string; kind: string; tokens: number }>()
+
+    for (const row of pie.filter(one => one.kind !== 'free')) {
+      const look = sliceLook(row.name)
+      const known = merged.get(look.short)
+
+      merged.set(look.short, { ...look, kind: row.kind, tokens: (known?.tokens ?? 0) + row.tokens })
+    }
+
+    const parts = [...merged.values()]
+    const legend = [
+      ...parts.filter(part => part.kind !== 'buffer').sort((a, b) => b.tokens - a.tokens).slice(0, 5),
+      ...parts.filter(part => part.kind === 'buffer'),
+    ]
+    const entry = (part: (typeof legend)[number]) => `■ ${part.short} ${kilo(part.tokens)}  `
+    // The readout's height, line by line, so the sprite takes only what is left and
+    // the buttons never fall off the bottom of the pane.
+    let legendLines = legend.length > 0 ? 1 : 0
+
+    for (let used = 0, i = 0; i < legend.length; i++) {
+      const w = entry(legend[i]!).length
+
+      if (used + w > columns && used > 0) {
+        legendLines += 1
+        used = 0
+      }
+      used += w
+    }
+
+    const dietLine = dieting > 0 ? `eating ~${kilo(plate)} tokens from the context on your next /compact` : ''
+    const readoutLines =
+      3 +
+      legendLines +
+      limits.length +
+      1 +
+      (remark === undefined ? 0 : 1) +
+      Math.ceil(dietLine.length / columns) +
+      2 +
+      (e.props.isFocused ? 0 : 1)
     let sprite
 
     // Raster draws on the terminal only; elsewhere it is an empty fragment.
@@ -804,7 +841,7 @@ export const register: Register = on => {
 
       // After a hot reload the scene starts over: take the level from the banked tokens.
       if (scene.rank === 0) levelUp(scene, rank)
-      const rows = Math.max(6, Math.min(22, e.props.scroll.bodyRows - 9))
+      const rows = Math.max(6, Math.min(22, e.props.scroll.bodyRows - readoutLines - 1))
 
       canvas = { columns: wide, rows }
       if (loop === undefined) {
@@ -832,7 +869,7 @@ export const register: Register = on => {
           <Text color={tint} bold>
             {say}
           </Text>
-          <Text dimColor>
+          <Text dimColor wrap="truncate-end">
             {activity !== ''
               ? `> ${activity}${chain}`
               : full.ate > 0
@@ -861,7 +898,7 @@ export const register: Register = on => {
               {legend.map(part => (
                 <Text>
                   <Text color={part.color}>{part.kind === 'buffer' ? '▒' : '■'}</Text>
-                  <Text dimColor>{` ${part.short} ${kilo(part.tokens)}  `}</Text>
+                  <Text dimColor>{entry(part).slice(1)}</Text>
                 </Text>
               ))}
             </Box>
@@ -881,7 +918,7 @@ export const register: Register = on => {
             <Text dimColor>{` ${kilo(xpFor(rank + 1) - eaten)} to Lv ${rank + 1}`}</Text>
           </Box>
           {remark !== undefined && <Text dimColor>{remark}</Text>}
-          {dieting > 0 && <Text color="yellow">eating ~{kilo(plate)} tokens from the context on your next /compact</Text>}
+          {dieting > 0 && <Text color="yellow">{dietLine}</Text>}
           {/* Plain buttons show their key: `m: Monster`. The keys work while the pane holds the keyboard. */}
           <Box>
             <Button
@@ -900,14 +937,14 @@ export const register: Register = on => {
               onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
             />
             <Text>  </Text>
-            {/* diet.tsx answers this press: onPress cannot call into it, as the engine
-                refuses $ passed across an import. */}
-            <Button key="diet" label="Diet: free context" hotkey="d" plain onPress={() => undefined} />
-            <Text>  </Text>
             <Button key="pet" label="Pet" hotkey="p" plain onPress={() => stroke($)} />
           </Box>
-          {/* sound.tsx answers this press, as the diet's does. */}
+          {/* Two rows of buttons, each inside 48 columns, so neither wraps. */}
           <Box>
+            {/* diet.tsx and sound.tsx answer these presses: onPress cannot call into
+                them, as the engine refuses $ passed across an import. */}
+            <Button key="diet" label="Diet: free context" hotkey="d" plain onPress={() => undefined} />
+            <Text>  </Text>
             <Button key="sound" label={`Sound: ${isLoud ? 'on' : 'off'}`} hotkey="s" plain onPress={() => undefined} />
           </Box>
           {!e.props.isFocused && <Text dimColor>ctrl+x tab or a click gives me the keys</Text>}

@@ -43,6 +43,8 @@ export type Scene = {
   smile: number
   blush: number
   power: number
+  // Full tilt: the token rate pegged, with subagents on top. 0 to 1, eased.
+  frenzy: number
   combo: number
   best: number
   comboAt: number
@@ -159,6 +161,15 @@ const mix = (a: number, b: number, t: number) => {
   return channel(16) | channel(8) | channel(0)
 }
 
+// A fully saturated color going round the hue wheel, for the frenzy.
+const rainbow = (turn: number) => {
+  const h = ((turn % 1) + 1) % 1 * 6
+  const x = 1 - Math.abs((h % 2) - 1)
+  const [r, g, b] = h < 1 ? [1, x, 0] : h < 2 ? [x, 1, 0] : h < 3 ? [0, 1, x] : h < 4 ? [0, x, 1] : h < 5 ? [x, 0, 1] : [1, 0, x]
+
+  return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255)
+}
+
 // A repeatable 0..1 from integers, so paint() flickers without moving the scene.
 const hash = (a: number, b = 0) => {
   let h = (a * 374761393 + b * 668265263) | 0
@@ -213,6 +224,7 @@ export const createScene = (look: Look): Scene => ({
   smile: 0.3,
   blush: 0,
   power: 0,
+  frenzy: 0,
   combo: 0,
   best: 0,
   comboAt: -100,
@@ -337,6 +349,7 @@ export const lively = (s: Scene) =>
   s.busy ||
   s.heat > 0.02 ||
   s.power > 0.02 ||
+  s.frenzy > 0.02 ||
   s.motes.length > 0 ||
   s.servings.length > 0 ||
   s.bits.some(bit => bit.kind !== 'z' && bit.kind !== 'firefly') ||
@@ -395,7 +408,8 @@ const shape = (s: Scene, width: number, height: number) => {
     s.power * 1.5 +
     hop +
     move.lift
-  const shake = s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2) : 0
+  const shake =
+    s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2 * (1 + s.frenzy * 2)) : 0
   const cx = width / 2 + shake + Math.round(s.shift + move.dx)
   const feet = monster === 'ghost' || monster === 'slime' ? 0 : r0 * 0.18
   // However it floats, the head stays on screen.
@@ -435,7 +449,10 @@ const shape = (s: Scene, width: number, height: number) => {
     thinking: s.busy && !eating,
     angry: t - s.errorAt < 20,
     blink: t - s.blinkAt < 3 && t - s.typedAt >= 15,
-    body: starving ? mix(PALETTE[s.look.color] ?? 0x3d7bff, 0x8a8f99, 0.55) : (PALETTE[s.look.color] ?? 0x3d7bff),
+    body: starving
+      ? mix(PALETTE[s.look.color] ?? 0x3d7bff, 0x8a8f99, 0.55)
+      : mix(PALETTE[s.look.color] ?? 0x3d7bff, rainbow(t * 0.08), s.frenzy * 0.4),
+    frenzy: s.frenzy,
     mouth: { x: cx, y: cy + ry * (monster === 'slime' ? 0.3 : 0.34) },
     // Where it stands at rest, and the middle of its body there, for the antics' props.
     home: width / 2,
@@ -483,6 +500,7 @@ const mood = (s: Scene, f: Shape) => {
   if (f.greeting) return set('happy', 'none', 0, 0.45, 1, 0.5)
   if (f.burping) return set('happy', 'none', 0, 1, 0.6, 0.6)
   if (f.cheering) return set('happy', 'none', 0, 0.75, 1, 1)
+  if (f.frenzy > 0.55) return set('dizzy', 'fierce', 0, 0.55 + 0.45 * chomp, 0.9, 1)
   if (f.power > 0.5) return set('open', 'fierce', 0.1, f.eating ? 0.3 + 0.6 * chomp : 0.5, 0.3, 0.2)
   if (f.blaze > 0.3) return set('open', 'fierce', 0.15, f.eating ? 0.3 + 0.6 * chomp : 0.25, 0.6, 0.4)
   if (s.antic !== null) {
@@ -1060,6 +1078,11 @@ export const step = (s: Scene, width: number, height: number) => {
   s.lastLevel = s.level
   s.power += ((s.level > 0 ? 1 : 0) - s.power) * 0.08
 
+  // The frenzy builds fast and burns off slower: the rate pegged lights it, subagents and a combo stoke it.
+  const goal = clamp((s.heat - 0.55) / 0.35) * clamp(0.45 + s.level * 0.2 + (s.combo >= 3 ? 0.15 : 0))
+
+  s.frenzy += (goal - s.frenzy) * (goal > s.frenzy ? 0.15 : 0.04)
+
   // Squash and stretch: a spring pulled back to round, kicked by bites and landings.
   if (s.tick - s.cheerAt === HOP) s.squashV += 0.14
 
@@ -1070,7 +1093,8 @@ export const step = (s: Scene, width: number, height: number) => {
   if (grown === 4) s.squashV -= 0.3
   if (grown === 18) s.squashV += 0.3
   s.squashV = (s.squashV + (0 - s.squash) * 0.35) * 0.7
-  s.squash += s.squashV
+  // Never so far that the body turns inside out.
+  s.squash = clamp(s.squash + s.squashV, -0.35, 0.35)
 
   const f = shape(s, width, height)
 
@@ -1096,13 +1120,17 @@ export const step = (s: Scene, width: number, height: number) => {
   s.googly = { x: clamp(s.googly.x + s.googlyV.x, -1, 1), y: clamp(s.googly.y + s.googlyV.y, -1, 1) }
 
   // Each mote carries a share of its serving; more heat, more motes a frame.
-  for (let budget = 1 + Math.round(s.heat * 5); budget > 0 && s.servings.length > 0; budget--) {
+  // In a frenzy the tokens come many times thicker, from every edge.
+  for (let budget = 1 + Math.round(s.heat * 5 + s.frenzy * 24); budget > 0 && s.servings.length > 0; budget--) {
     const serving = s.servings[0]!
-    const bite = Math.max(25, serving.tokens / 40)
+    const bite = Math.max(25, serving.tokens / 40) / (1 + s.frenzy * 4)
+    const edge = random()
     const [x, y] =
       serving.color === PROMPT
         ? [random() * width, height - 1]
-        : [random() < 0.5 ? 0 : width - 1, 2 + random() * (f.floor - 6)]
+        : s.frenzy > 0.2 && edge < s.frenzy * 0.5
+          ? [random() * width, edge < s.frenzy * 0.25 ? 0 : height - 1]
+          : [random() < 0.5 ? 0 : width - 1, 2 + random() * (f.floor - 6)]
 
     s.motes.push({ x, y, px: x, py: y, color: serving.color })
     serving.tokens -= bite
@@ -1110,16 +1138,18 @@ export const step = (s: Scene, width: number, height: number) => {
     if (serving.tokens <= 0) s.servings.shift()
   }
 
-  const speed = 1.2 + s.heat * 2.2 + s.power
+  const speed = 1.2 + s.heat * 2.2 + s.power + s.frenzy * 2
   const { mouth } = f
 
-  s.motes = s.motes.slice(-120).filter(mote => {
+  let bites = 0
+
+  s.motes = s.motes.slice(-(120 + Math.round(s.frenzy * 320))).filter(mote => {
     const [dx, dy] = [mouth.x - mote.x, mouth.y - mote.y]
     const dist = Math.hypot(dx, dy)
 
     if (dist < 1.5) {
-      // A bite: a little squash, and crumbs fly.
-      s.squashV += 0.015
+      // A bite: a little squash (the kick is capped per frame below), and crumbs fly.
+      bites += 1
 
       if (random() < 0.5) {
         s.bits.push({
@@ -1139,11 +1169,17 @@ export const step = (s: Scene, width: number, height: number) => {
 
     mote.px = mote.x
     mote.py = mote.y
-    mote.x += (dx / dist) * Math.min(dist, speed)
-    mote.y += (dy / dist) * Math.min(dist, speed)
+    // A frenzy turns the stream into a vortex: tokens swirl round as they fall in.
+    const swirl = dist > 4 ? s.frenzy * 0.9 : 0
+
+    mote.x += (dx / dist) * Math.min(dist, speed) - (dy / dist) * speed * swirl
+    mote.y += (dy / dist) * Math.min(dist, speed) + (dx / dist) * speed * swirl
 
     return true
   })
+
+  // Hundreds of bites a frame in a frenzy must not kick the spring inside out.
+  s.squashV += Math.min(0.045, bites * 0.015)
 
   // The moments: sparkles for a finished turn, Zs while it sleeps, tears, drool,
   // a burp's puffs, and fireflies on a quiet night.
@@ -1280,6 +1316,20 @@ export const step = (s: Scene, width: number, height: number) => {
         color: i % 2 === 0 ? 0xf6f1e7 : g.color,
       })
     }
+  }
+
+  // The ground can't take it: debris pops up around its feet.
+  for (let i = 0; s.frenzy > 0.4 && i < 2 && random() < s.frenzy; i++) {
+    s.bits.push({
+      kind: 'crumb',
+      x: f.cx + (random() - 0.5) * f.rx * 3,
+      y: f.floor - 1,
+      vx: (random() - 0.5) * 1.6,
+      vy: -1 - random() * 1.6 * s.frenzy,
+      life: 24,
+      max: 24,
+      color: random() < 0.5 ? mix(0x3f8f4f, 0x1b2a3f, 1 - daylight(s.hour)) : 0x8a6a4a,
+    })
   }
 
   const night = 1 - daylight(s.hour)
@@ -1658,11 +1708,20 @@ const helpers = (c: Canvas, f: Shape, count: number) => {
       toss = (p - 0.65) / 0.1
     } else if (p >= 0.75) x = ease(target, home, (p - 0.75) / 0.25)
 
-    const running = (p >= 0.5 && p < 0.65) || p >= 0.75
+    // In a frenzy they sprint laps round the big one instead.
+    const lap = f.frenzy > 0.5
+    const orbit = t * 0.35 + (i * Math.PI) / 2
+
+    if (lap) {
+      x = cx + Math.cos(orbit) * (rx + 7)
+      toss = -1
+    }
+
+    const running = lap || (p >= 0.5 && p < 0.65) || p >= 0.75
     const beat = Math.sin(t * 0.6)
     const hop = running ? Math.abs(Math.sin(t * 1.3 + i)) * 1.5 : Math.abs(beat) * 2.5
     const float = monster === 'ghost' ? 2 + Math.sin(t * 0.2 + i) : 0
-    const y = floor - 3 - hop - float
+    const y = floor - 3 - hop - float - (lap ? Math.max(0, Math.sin(orbit)) * 3 : 0)
     const color = mix(HELPERS[i]!, GOLD, power * 0.3)
     const squash = hop < 0.4 && !running ? 0.15 : 0
     const facing = running ? (p < 0.65 ? -side : side) : 0
@@ -1741,7 +1800,12 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
     let hand = rest
 
     if (f.cheering || f.leveling || (s.finish?.text === 'K.O.' && t - s.finish.at < 30)) hand = up
-    else if (f.power > 0.5) hand = { x: ax + side * length * 0.75, y: ay + length * 0.45 + (hash(t, side) - 0.5) }
+    else if (f.frenzy > 0.5) {
+      // Flailing: each hand whirls on its own wild loop.
+      const whirl = t * 1.9 + (side > 0 ? Math.PI : 0)
+
+      hand = { x: ax + side * length * (0.55 + 0.45 * Math.cos(whirl)), y: ay - length * 0.9 * Math.sin(whirl * 1.3) }
+    } else if (f.power > 0.5) hand = { x: ax + side * length * 0.75, y: ay + length * 0.45 + (hash(t, side) - 0.5) }
     else if (f.eating) {
       // Hands take turns shoveling.
       const scoop = Math.max(0, Math.sin(s.chew * 0.5 + (side > 0 ? Math.PI : 0)))
@@ -2514,12 +2578,55 @@ export const paint = (s: Scene, width: number, height: number): Uint32Array => {
     c.disc(f.cx + f.rx * 0.78, f.cy - f.ry * 0.55 + p * f.ry * 0.5, 0.9, 0xbfe9ff)
   }
 
+  frenzy(c, f)
   hud(c, s)
   flash(c, f)
   // No level on an egg, and none in the corner while the big one shows.
   badge(c, (f.egg >= 0 && f.egg < EGG) || f.leveling ? 0 : s.rank)
 
-  return c.px
+  return glitch(c.px, width, height, f)
+}
+
+// The frenzy's overlay: anime speed lines bursting out from the monster, and the
+// whole sky strobing on the beat.
+const frenzy = (c: Canvas, { t, cx, cy, rx, frenzy: k }: Shape) => {
+  if (k < 0.15) return
+
+  for (let i = 0; i < 18; i++) {
+    const angle = hash(i, Math.floor(t / 2)) * Math.PI * 2
+    const from = rx + 3 + hash(i, t) * 4
+    const to = Math.hypot(c.width, c.height)
+
+    for (let r = from; r < to; r += 0.6) {
+      c.add(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r * 0.8, 0xffffff, 0.22 * k * (1 - r / to))
+    }
+  }
+
+  if (t % 6 === 0) {
+    for (let i = 0; i < c.px.length; i++) c.add(i % c.width, Math.floor(i / c.width), rainbow(t * 0.05), 0.12 * k)
+  }
+}
+
+// At full tilt the whole picture shakes, and now and then splits into red and blue.
+const glitch = (px: Uint32Array, width: number, height: number, { t, frenzy: k }: Shape) => {
+  if (k < 0.25) return px
+
+  const sx = Math.round((hash(t, 8) - 0.5) * 4 * k)
+  const sy = Math.round((hash(t, 9) - 0.5) * 3 * k)
+  const split = k > 0.55 && t % 5 < 2 ? 1 : 0
+  const at = (x: number, y: number) =>
+    px[Math.max(0, Math.min(height - 1, y)) * width + Math.max(0, Math.min(width - 1, x))] ?? 0
+  const out = new Uint32Array(px.length)
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [r, g, b] = [at(x - sx - split, y - sy), at(x - sx, y - sy), at(x - sx + split, y - sy)]
+
+      out[y * width + x] = (r & 0xff0000) | (g & 0x00ff00) | (b & 0x0000ff)
+    }
+  }
+
+  return out
 }
 
 // The xterm 256-color palette: a 6x6x6 cube and 24 greys.

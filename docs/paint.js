@@ -62,6 +62,12 @@ const mix = (a, b, t) => {
   };
   return channel(16) | channel(8) | channel(0);
 };
+const rainbow = (turn) => {
+  const h = (turn % 1 + 1) % 1 * 6;
+  const x = 1 - Math.abs(h % 2 - 1);
+  const [r, g, b] = h < 1 ? [1, x, 0] : h < 2 ? [x, 1, 0] : h < 3 ? [0, 1, x] : h < 4 ? [0, x, 1] : h < 5 ? [x, 0, 1] : [1, 0, x];
+  return Math.round(r * 255) << 16 | Math.round(g * 255) << 8 | Math.round(b * 255);
+};
 const hash = (a, b = 0) => {
   let h = a * 374761393 + b * 668265263 | 0;
   h = Math.imul(h ^ h >>> 13, 1274126177);
@@ -111,6 +117,7 @@ const createScene = (look) => ({
   smile: 0.3,
   blush: 0,
   power: 0,
+  frenzy: 0,
   combo: 0,
   best: 0,
   comboAt: -100,
@@ -200,7 +207,7 @@ const settle = (s) => {
   s.antic = null;
 };
 const comboShown = (s) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES;
-const lively = (s) => s.busy || s.heat > 0.02 || s.power > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
+const lively = (s) => s.busy || s.heat > 0.02 || s.power > 0.02 || s.frenzy > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
 const shape = (s, width, height) => {
   const t = s.tick;
   const full = (s.belly?.percent ?? 0) / 100;
@@ -233,7 +240,7 @@ const shape = (s, width, height) => {
   const hopP = (t - s.cheerAt) / HOP;
   const hop = (hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0) + (flying ? Math.sin(Math.PI * flight) * r0 * 1.5 : 0);
   const lift = (monster === "ghost" ? 3 + Math.sin(s.breathe * 1.3) * 1.4 : 0) + (eating ? Math.abs(Math.sin(s.bob)) * (0.3 + s.heat * 1.8) : 0) + s.power * 1.5 + hop + move.lift;
-  const shake = s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2) : 0;
+  const shake = s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2 * (1 + s.frenzy * 2)) : 0;
   const cx = width / 2 + shake + Math.round(s.shift + move.dx);
   const feet = monster === "ghost" || monster === "slime" ? 0 : r0 * 0.18;
   const cy = floor - feet - ry - Math.min(lift, Math.max(0, floor - feet - 2 * ry - 4));
@@ -271,7 +278,8 @@ const shape = (s, width, height) => {
     thinking: s.busy && !eating,
     angry: t - s.errorAt < 20,
     blink: t - s.blinkAt < 3 && t - s.typedAt >= 15,
-    body: starving ? mix(PALETTE[s.look.color] ?? 4029439, 9080729, 0.55) : PALETTE[s.look.color] ?? 4029439,
+    body: starving ? mix(PALETTE[s.look.color] ?? 4029439, 9080729, 0.55) : mix(PALETTE[s.look.color] ?? 4029439, rainbow(t * 0.08), s.frenzy * 0.4),
+    frenzy: s.frenzy,
     mouth: { x: cx, y: cy + ry * (monster === "slime" ? 0.3 : 0.34) },
     // Where it stands at rest, and the middle of its body there, for the antics' props.
     home: width / 2,
@@ -310,6 +318,7 @@ const mood = (s, f) => {
   if (f.greeting) return set("happy", "none", 0, 0.45, 1, 0.5);
   if (f.burping) return set("happy", "none", 0, 1, 0.6, 0.6);
   if (f.cheering) return set("happy", "none", 0, 0.75, 1, 1);
+  if (f.frenzy > 0.55) return set("dizzy", "fierce", 0, 0.55 + 0.45 * chomp, 0.9, 1);
   if (f.power > 0.5) return set("open", "fierce", 0.1, f.eating ? 0.3 + 0.6 * chomp : 0.5, 0.3, 0.2);
   if (f.blaze > 0.3) return set("open", "fierce", 0.15, f.eating ? 0.3 + 0.6 * chomp : 0.25, 0.6, 0.4);
   if (s.antic !== null) {
@@ -707,13 +716,15 @@ const step = (s, width, height) => {
   if (s.level > s.lastLevel) s.flashAt = s.tick;
   s.lastLevel = s.level;
   s.power += ((s.level > 0 ? 1 : 0) - s.power) * 0.08;
+  const goal = clamp((s.heat - 0.55) / 0.35) * clamp(0.45 + s.level * 0.2 + (s.combo >= 3 ? 0.15 : 0));
+  s.frenzy += (goal - s.frenzy) * (goal > s.frenzy ? 0.15 : 0.04);
   if (s.tick - s.cheerAt === HOP) s.squashV += 0.14;
   const grown = s.tick - s.rankUpAt;
   if (grown === 1) s.squashV += 0.2;
   if (grown === 4) s.squashV -= 0.3;
   if (grown === 18) s.squashV += 0.3;
   s.squashV = (s.squashV + (0 - s.squash) * 0.35) * 0.7;
-  s.squash += s.squashV;
+  s.squash = clamp(s.squash + s.squashV, -0.35, 0.35);
   const f = shape(s, width, height);
   live(s, f);
   const face2 = mood(s, f);
@@ -729,21 +740,23 @@ const step = (s, width, height) => {
     y: (s.googlyV.y + (s.gaze.y + 0.25 - s.googly.y) * 0.25 + s.squashV * 3) * 0.72
   };
   s.googly = { x: clamp(s.googly.x + s.googlyV.x, -1, 1), y: clamp(s.googly.y + s.googlyV.y, -1, 1) };
-  for (let budget = 1 + Math.round(s.heat * 5); budget > 0 && s.servings.length > 0; budget--) {
+  for (let budget = 1 + Math.round(s.heat * 5 + s.frenzy * 24); budget > 0 && s.servings.length > 0; budget--) {
     const serving = s.servings[0];
-    const bite = Math.max(25, serving.tokens / 40);
-    const [x, y] = serving.color === PROMPT ? [random() * width, height - 1] : [random() < 0.5 ? 0 : width - 1, 2 + random() * (f.floor - 6)];
+    const bite = Math.max(25, serving.tokens / 40) / (1 + s.frenzy * 4);
+    const edge = random();
+    const [x, y] = serving.color === PROMPT ? [random() * width, height - 1] : s.frenzy > 0.2 && edge < s.frenzy * 0.5 ? [random() * width, edge < s.frenzy * 0.25 ? 0 : height - 1] : [random() < 0.5 ? 0 : width - 1, 2 + random() * (f.floor - 6)];
     s.motes.push({ x, y, px: x, py: y, color: serving.color });
     serving.tokens -= bite;
     if (serving.tokens <= 0) s.servings.shift();
   }
-  const speed = 1.2 + s.heat * 2.2 + s.power;
+  const speed = 1.2 + s.heat * 2.2 + s.power + s.frenzy * 2;
   const { mouth: mouth2 } = f;
-  s.motes = s.motes.slice(-120).filter((mote) => {
+  let bites = 0;
+  s.motes = s.motes.slice(-(120 + Math.round(s.frenzy * 320))).filter((mote) => {
     const [dx, dy] = [mouth2.x - mote.x, mouth2.y - mote.y];
     const dist = Math.hypot(dx, dy);
     if (dist < 1.5) {
-      s.squashV += 0.015;
+      bites += 1;
       if (random() < 0.5) {
         s.bits.push({
           kind: "crumb",
@@ -760,10 +773,12 @@ const step = (s, width, height) => {
     }
     mote.px = mote.x;
     mote.py = mote.y;
-    mote.x += dx / dist * Math.min(dist, speed);
-    mote.y += dy / dist * Math.min(dist, speed);
+    const swirl = dist > 4 ? s.frenzy * 0.9 : 0;
+    mote.x += dx / dist * Math.min(dist, speed) - dy / dist * speed * swirl;
+    mote.y += dy / dist * Math.min(dist, speed) + dx / dist * speed * swirl;
     return true;
   });
+  s.squashV += Math.min(0.045, bites * 0.015);
   if (s.tick - s.cheerAt === 1) {
     for (let i = 0; i < 8; i++) {
       const angle = i / 8 * Math.PI * 2;
@@ -877,6 +892,18 @@ const step = (s, width, height) => {
         color: i % 2 === 0 ? 16183783 : g.color
       });
     }
+  }
+  for (let i = 0; s.frenzy > 0.4 && i < 2 && random() < s.frenzy; i++) {
+    s.bits.push({
+      kind: "crumb",
+      x: f.cx + (random() - 0.5) * f.rx * 3,
+      y: f.floor - 1,
+      vx: (random() - 0.5) * 1.6,
+      vy: -1 - random() * 1.6 * s.frenzy,
+      life: 24,
+      max: 24,
+      color: random() < 0.5 ? mix(4165455, 1780287, 1 - daylight(s.hour)) : 9071178
+    });
   }
   const night = 1 - daylight(s.hour);
   if (night > 0.6 && !s.busy && s.bits.filter((bit) => bit.kind === "firefly").length < 3 && random() < 0.02) {
@@ -1132,11 +1159,17 @@ const helpers = (c, f, count) => {
       x = target;
       toss = (p - 0.65) / 0.1;
     } else if (p >= 0.75) x = ease(target, home, (p - 0.75) / 0.25);
-    const running = p >= 0.5 && p < 0.65 || p >= 0.75;
+    const lap = f.frenzy > 0.5;
+    const orbit = t * 0.35 + i * Math.PI / 2;
+    if (lap) {
+      x = cx + Math.cos(orbit) * (rx + 7);
+      toss = -1;
+    }
+    const running = lap || p >= 0.5 && p < 0.65 || p >= 0.75;
     const beat = Math.sin(t * 0.6);
     const hop = running ? Math.abs(Math.sin(t * 1.3 + i)) * 1.5 : Math.abs(beat) * 2.5;
     const float = monster === "ghost" ? 2 + Math.sin(t * 0.2 + i) : 0;
-    const y = floor - 3 - hop - float;
+    const y = floor - 3 - hop - float - (lap ? Math.max(0, Math.sin(orbit)) * 3 : 0);
     const color = mix(HELPERS[i], GOLD, power * 0.3);
     const squash = hop < 0.4 && !running ? 0.15 : 0;
     const facing = running ? p < 0.65 ? -side : side : 0;
@@ -1194,7 +1227,10 @@ const limbs = (c, f, s) => {
     const posed = pose(s, f, side, ax, ay, length, rest);
     let hand = rest;
     if (f.cheering || f.leveling || s.finish?.text === "K.O." && t - s.finish.at < 30) hand = up;
-    else if (f.power > 0.5) hand = { x: ax + side * length * 0.75, y: ay + length * 0.45 + (hash(t, side) - 0.5) };
+    else if (f.frenzy > 0.5) {
+      const whirl = t * 1.9 + (side > 0 ? Math.PI : 0);
+      hand = { x: ax + side * length * (0.55 + 0.45 * Math.cos(whirl)), y: ay - length * 0.9 * Math.sin(whirl * 1.3) };
+    } else if (f.power > 0.5) hand = { x: ax + side * length * 0.75, y: ay + length * 0.45 + (hash(t, side) - 0.5) };
     else if (f.eating) {
       const scoop = Math.max(0, Math.sin(s.chew * 0.5 + (side > 0 ? Math.PI : 0)));
       hand = { x: ease(rest.x, mouthSpot.x, scoop), y: ease(rest.y, mouthSpot.y, scoop) };
@@ -1765,10 +1801,40 @@ const paint = (s, width, height) => {
     const p = f.t * 0.06 % 1;
     c.disc(f.cx + f.rx * 0.78, f.cy - f.ry * 0.55 + p * f.ry * 0.5, 0.9, 12577279);
   }
+  frenzy(c, f);
   hud(c, s);
   flash(c, f);
   badge(c, f.egg >= 0 && f.egg < EGG || f.leveling ? 0 : s.rank);
-  return c.px;
+  return glitch(c.px, width, height, f);
+};
+const frenzy = (c, { t, cx, cy, rx, frenzy: k }) => {
+  if (k < 0.15) return;
+  for (let i = 0; i < 18; i++) {
+    const angle = hash(i, Math.floor(t / 2)) * Math.PI * 2;
+    const from = rx + 3 + hash(i, t) * 4;
+    const to = Math.hypot(c.width, c.height);
+    for (let r = from; r < to; r += 0.6) {
+      c.add(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r * 0.8, 16777215, 0.22 * k * (1 - r / to));
+    }
+  }
+  if (t % 6 === 0) {
+    for (let i = 0; i < c.px.length; i++) c.add(i % c.width, Math.floor(i / c.width), rainbow(t * 0.05), 0.12 * k);
+  }
+};
+const glitch = (px, width, height, { t, frenzy: k }) => {
+  if (k < 0.25) return px;
+  const sx = Math.round((hash(t, 8) - 0.5) * 4 * k);
+  const sy = Math.round((hash(t, 9) - 0.5) * 3 * k);
+  const split = k > 0.55 && t % 5 < 2 ? 1 : 0;
+  const at = (x, y) => px[Math.max(0, Math.min(height - 1, y)) * width + Math.max(0, Math.min(width - 1, x))] ?? 0;
+  const out = new Uint32Array(px.length);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [r, g, b] = [at(x - sx - split, y - sy), at(x - sx, y - sy), at(x - sx + split, y - sy)];
+      out[y * width + x] = r & 16711680 | g & 65280 | b & 255;
+    }
+  }
+  return out;
 };
 const LEVELS = [0, 95, 135, 175, 215, 255];
 const around = (v) => {
