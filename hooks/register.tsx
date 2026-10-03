@@ -117,6 +117,23 @@ const ASCII: Record<string, { open: string[]; closed: string[] }> = {
   '-------'
 `),
   },
+  // After the CrabStack crab: (\/) (°,,°) (\/).
+  crab: {
+    open: art(String.raw`
+ (\/)       (\/)
+   \  E   E  /
+    \(  /\  )/
+    //(____)\\
+   //  /  \  \\
+`),
+    closed: art(String.raw`
+ (\/)       (\/)
+   \  E   E  /
+    \(  ,,  )/
+    //(____)\\
+   //  /  \  \\
+`),
+  },
 }
 const NAMES = Object.keys(ASCII)
 const COLORS = Object.keys(PALETTE)

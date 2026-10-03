@@ -190,7 +190,7 @@ h1 { margin: 0; line-height: 0; }
 .pane-hero { --scale: 7; }
 .pane-specimen { --scale: 6; }
 .pane-small { --scale: 4; }
-.pane-cast { --scale: 5; }
+.pane-cast { --scale: 4; }
 
 .readout { margin: 10px auto 0; font-size: 13px; line-height: 1.5; white-space: pre; width: max-content; max-width: 100%; overflow: hidden; }
 .readout .say-line { font-weight: 700; }
@@ -268,7 +268,7 @@ pre.plain { margin: 0 0 14px; color: var(--t-prompt); padding-left: 2ch; }
 .stray-mid { margin-top: 40px; margin-right: 40px; }
 
 /* The cast. */
-.cast { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin-top: 28px; }
+.cast { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin-top: 28px; }
 .pane-cast { padding: 14px 10px 12px; text-align: center; }
 .cast-name { font-size: 13px; margin: 10px 0 8px; }
 

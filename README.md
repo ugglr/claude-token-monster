@@ -25,7 +25,7 @@ The pane opens by itself in a terminal 144 columns wide or more; at any width, r
 
 `m` swap monster, `c` swap color, `p` pet, `d` diet, `s` sound on or off, `ctrl+x x` close.
 
-Or by name: `/token-monster slime green`, `/token-monster diet`, `/token-monster sound on`. Monsters: cookie, slime, ghost, gremlin.
+Or by name: `/token-monster slime green`, `/token-monster diet`, `/token-monster sound on`. Monsters: cookie, slime, ghost, gremlin, crab.
 
 ## Read the monster
 

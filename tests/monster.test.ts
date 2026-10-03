@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { createScene, finishTurn, hit, paint, startTurn, step } from '../hooks/paint'
 import type { On, SessionContextUsage } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { call, done, pane, SURFACES, text } from './harness'
+import { call, done, pane, run, SURFACES, text } from './harness'
 
 const engine = (on: On) => {
   on('session.measure', (_, e) => ({ changed: e.changed }))
@@ -170,13 +170,11 @@ test('/token-monster swaps by name and lists the options for an unknown word', a
   engine(on)
   mock.store(on)
   on('ui.open', () => ({ value: { isPlaced: true } }))
-  const run = (args: string) =>
-    $.command.run({ command: 'token-monster', args, origin: 'user', presentation: { layout: 'fullscreen', columns: 200 } } as never)
 
-  expect((await run('dragon')).text).toBe(
-    'Me not know dragon. Monsters: cookie, slime, ghost, gremlin. Colors: blue, cyan, green, yellow, magenta, red, white. Or: diet (or eat), sound on|off.',
+  expect((await run($, 'dragon')).text).toBe(
+    'Me not know dragon. Monsters: cookie, slime, ghost, gremlin, crab. Colors: blue, cyan, green, yellow, magenta, red, white, amber. Or: diet (or eat), sound on|off.',
   )
-  expect((await run('Gremlin GREEN')).text).toBe('Token Monster is hungry.')
+  expect((await run($, 'Gremlin GREEN')).text).toBe('Token Monster is hungry.')
   expect(await (await pane($, 'desktop')).find(text(' |  o   o  |'))).toBeDefined()
 })
 
@@ -505,4 +503,31 @@ test('a subagent starting mid-turn keeps the main turn combo', async ($, on) => 
   }
   await $.turn.start({ text: 'help', turnId: 'sub' })
   expect(await ui.find(text(/on fire x3/))).toBeDefined()
+})
+
+test('the crab moves in: by name, in amber, with its claws up on desktop', async ($, on) => {
+  engine(on)
+  mock.store(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+
+  expect((await run($, 'crab amber')).text).toBe('Token Monster is hungry.')
+
+  const ui = await pane($, 'desktop')
+
+  expect(await ui.find(text(' (\\/)       (\\/)'))).toBeDefined()
+  expect((await ui.find(text(' (\\/)       (\\/)')))?.props.color).toBe('#ffb000')
+})
+
+test('the crab paints at every pane size, tiny to large', () => {
+  for (const [width, height] of [[16, 12], [40, 40], [64, 44]] as const) {
+    const s = createScene({ monster: 'crab', color: 'amber' })
+
+    s.belly = fed(0)
+    for (let i = 0; i < 40; i++) step(s, width, height)
+
+    const px = paint(s, width, height)
+
+    expect(px.length).toBe(width * height)
+    expect([...px].some(color => color === 0xffb000 || (color >> 16) > 0xe0)).toBe(true)
+  }
 })

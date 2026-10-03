@@ -704,7 +704,7 @@ const buddy = make('diet', { monster: 'slime', color: 'green', w: 48, h: 34, scr
 make('stray-super', { monster: 'gremlin', color: 'magenta', w: 48, h: 34, script: superLoop, still: 70 })
 make('stray-sad', { monster: 'cookie', color: 'yellow', w: 48, h: 34, script: moping, still: 45 })
 make('stray-sleep', { monster: 'ghost', color: 'cyan', w: 48, h: 34, script: dozing, still: 60 })
-for (const [monster, color] of [['cookie', 'blue'], ['slime', 'green'], ['ghost', 'magenta'], ['gremlin', 'red']]) {
+for (const [monster, color] of [['cookie', 'blue'], ['slime', 'green'], ['ghost', 'magenta'], ['gremlin', 'red'], ['crab', 'amber']]) {
   const pet = make(`cast-${monster}`, { monster, color, w: 48, h: 36, script: life, still: 30 })
   const recolor = pet && $('[data-color]', pet.root)
   recolor?.addEventListener('click', () => {

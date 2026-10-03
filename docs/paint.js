@@ -1,5 +1,4 @@
 // Generated from hooks/paint.ts, the mod's renderer. Do not edit; rebuild from the repo root with:
-// npx esbuild hooks/paint.ts --format=esm --target=es2020 --outfile=docs/paint.js
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
@@ -28,7 +27,9 @@ const PALETTE = {
   yellow: 15909424,
   magenta: 13786352,
   red: 15749180,
-  white: 14673648
+  white: 14673648,
+  // CrabStack's amber.
+  amber: 16756736
 };
 const WHITE = 16777215;
 const BLACK = 0;
@@ -229,8 +230,9 @@ const shape = (s, width, height) => {
   const r0 = Math.min(width * 0.5, height * 0.62) * 0.5;
   const wobble = monster === "slime" ? 1 + 0.05 * Math.sin(s.breathe * 2.2) : 1;
   const breath = 1 + Math.sin(s.breathe) * (sleeping ? 0.05 : 0.025);
-  const rx0 = Math.min(width * 0.36, r0 * (0.78 + 0.5 * full) * (starving ? 0.85 : 1) * wobble) * tight;
-  const ry0 = Math.min(height * 0.3, r0 * (0.82 + 0.3 * full)) * tight * breath;
+  const [wide, low] = monster === "crab" ? [1.18, 0.7] : [1, 1];
+  const rx0 = Math.min(width * 0.38, r0 * (0.78 + 0.5 * full) * (starving ? 0.85 : 1) * wobble * wide) * tight;
+  const ry0 = Math.min(height * 0.3, r0 * (0.82 + 0.3 * full) * low) * tight * breath;
   const move = motion(s, r0);
   const grown = t - s.rankUpAt;
   const leveling = grown >= 0 && grown < LEVEL_UP;
@@ -245,8 +247,9 @@ const shape = (s, width, height) => {
   const hop = (hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0) + (flying ? Math.sin(Math.PI * flight) * r0 * 1.5 : 0);
   const lift = (monster === "ghost" ? 3 + Math.sin(s.breathe * 1.3) * 1.4 : 0) + (eating ? Math.abs(Math.sin(s.bob)) * (0.3 + s.heat * 1.8) : 0) + s.power * 1.5 + hop + move.lift;
   const shake = s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2 * (1 + s.frenzy * 2)) : 0;
-  const cx = width / 2 + shake + Math.round(s.shift + move.dx);
-  const feet = monster === "ghost" || monster === "slime" ? 0 : r0 * 0.18;
+  const shuffle = monster === "crab" ? Math.round(Math.sin(s.breathe * 0.8) * 2) : 0;
+  const cx = width / 2 + shake + shuffle + Math.round(s.shift + move.dx);
+  const feet = monster === "ghost" || monster === "slime" ? 0 : r0 * (monster === "crab" ? 0.4 : 0.18);
   const cy = floor - feet - ry - Math.min(lift, Math.max(0, floor - feet - 2 * ry - 4));
   return {
     t,
@@ -284,7 +287,7 @@ const shape = (s, width, height) => {
     blink: t - s.blinkAt < 3 && t - s.typedAt >= 15,
     body: starving ? mix(PALETTE[s.look.color] ?? 4029439, 9080729, 0.55) : mix(PALETTE[s.look.color] ?? 4029439, rainbow(t * 0.08), s.frenzy * 0.4),
     frenzy: s.frenzy,
-    mouth: { x: cx, y: cy + ry * (monster === "slime" ? 0.3 : 0.34) },
+    mouth: { x: cx, y: cy + ry * (monster === "slime" ? 0.3 : monster === "crab" ? 0.05 : 0.34) },
     // Where it stands at rest, and the middle of its body there, for the antics' props.
     home: width / 2,
     rest: floor - feet - ry,
@@ -1182,12 +1185,21 @@ const helpers = (c, f, count) => {
       if (monster === "slime") return d < 1 && ny < 0.8;
       if (monster === "ghost") return ny < 0 ? d < 1 : Math.abs(nx) < 1 && ny < 1 + 0.25 * Math.sin(nx * 6 + t * 0.6);
       if (monster === "cookie") return d < 1 + 0.12 * Math.sin(Math.atan2(ny, nx) * 9);
+      if (monster === "crab") return d < 1 && ny > -0.55;
       return d < 1;
     };
     c.blob(x, y, 3.2 * (1 + squash), 2.9 * (1 - squash), color, mini);
     if (monster === "gremlin") {
       c.put(x - 2, y - 3.5, 15392712);
       c.put(x + 2, y - 3.5, 15392712);
+    }
+    if (monster === "crab") {
+      for (const side2 of [-1, 1]) {
+        c.put(x + side2 * 4, y - 2, mix(color, INK, 0.2));
+        c.put(x + side2 * 4.5, y - 3, mix(color, INK, 0.2));
+        c.put(x + side2 * 3.5, y - 3, mix(color, INK, 0.2));
+        c.put(x + side2 * 3, y + 2.5, mix(color, INK, 0.4));
+      }
     }
     const armUp = running || toss >= 0 ? 1 : beat > 0 ? 1 : 0;
     if (monster !== "ghost") {
@@ -1214,7 +1226,7 @@ const limbs = (c, f, s) => {
   const { monster, cx, cy, rx, ry, r0, t, body, floor, feet } = f;
   const thick = Math.max(1.2, r0 * 0.15);
   const length = r0 * 0.6;
-  if (feet > 0) {
+  if (feet > 0 && monster !== "crab") {
     for (const side of [-1, 1]) {
       const tap = f.thinking && side === 1 && t % 10 < 3 ? 1 : 0;
       const fx = cx + side * rx * 0.42;
@@ -1223,9 +1235,10 @@ const limbs = (c, f, s) => {
     }
   }
   if (monster === "ghost") return;
+  const crab = monster === "crab";
   for (const side of [-1, 1]) {
-    const [ax, ay] = [cx + side * rx * 0.86, cy + ry * 0.1];
-    const rest = { x: ax + side * length * 0.45, y: ay + length * 0.8 + Math.sin(f.wave + side) * 0.5 };
+    const [ax, ay] = [cx + side * rx * (crab ? 0.9 : 0.86), cy + ry * (crab ? -0.1 : 0.1)];
+    const rest = crab ? { x: ax + side * length * 0.7, y: ay - length * 0.75 + Math.sin(f.wave + side) * 0.5 } : { x: ax + side * length * 0.45, y: ay + length * 0.8 + Math.sin(f.wave + side) * 0.5 };
     const mouthSpot = { x: f.mouth.x + side * rx * 0.35, y: f.mouth.y + 1 };
     const up = { x: ax + side * length * 0.7, y: ay - length * 1.05 + Math.sin(t * 0.8 + side) * 0.8 };
     const posed = pose(s, f, side, ax, ay, length, rest);
@@ -1254,7 +1267,27 @@ const limbs = (c, f, s) => {
       const p = k / Math.max(1, steps);
       c.disc(ease(ax, hand.x, p), ease(ay, hand.y, p), thick, arm);
     }
-    c.blob(hand.x, hand.y, thick * 1.35, thick * 1.35, mix(arm, WHITE, 0.08), (nx, ny) => nx * nx + ny * ny < 1);
+    if (crab) {
+      const gape = f.eating ? Math.abs(Math.sin(s.chew)) : f.cheering ? 1 : 0.45 + 0.15 * Math.sin(t * 0.1 + side);
+      claw(c, hand.x, hand.y, side, gape, thick, arm);
+    } else {
+      c.blob(hand.x, hand.y, thick * 1.35, thick * 1.35, mix(arm, WHITE, 0.08), (nx, ny) => nx * nx + ny * ny < 1);
+    }
+  }
+};
+const claw = (c, x, y, side, gape, thick, color) => {
+  const toward = side > 0 ? -Math.PI / 3 : -2 * Math.PI / 3;
+  const reach = thick * 3.8;
+  c.blob(x, y, thick * 1.6, thick * 1.4, mix(color, WHITE, 0.08), (nx, ny) => nx * nx + ny * ny < 1);
+  for (const [jaw, width] of [[-1, 0.62], [1, 0.45]]) {
+    const angle = toward + jaw * side * (0.3 + gape * 0.5);
+    for (let k = 0; k <= 8; k++) {
+      const p = k / 8;
+      const bend = angle - jaw * side * p * p * 0.5;
+      const [jx, jy] = [x + Math.cos(bend) * reach * p, y + Math.sin(bend) * reach * p];
+      c.disc(jx, jy, thick * width * (1 - p * 0.6) + 0.35, mix(color, INK, 0.55));
+      c.disc(jx, jy, thick * width * (1 - p * 0.6), p > 0.8 ? mix(color, WHITE, 0.3) : mix(color, WHITE, 0.08));
+    }
   }
 };
 const torso = (c, f) => {
@@ -1268,9 +1301,27 @@ const torso = (c, f) => {
       if (k === 12) c.disc(x + 0.5, y - 0.8, 1.6, mix(body, BLACK, 0.35));
     }
   }
+  if (monster === "crab") {
+    const leg = mix(body, BLACK, 0.18);
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < 3; k++) {
+        const step2 = Math.sin(wave * 2.4 + k * 2.1 + (side > 0 ? 1 : 0)) * (f.eating ? 1.2 : 0.8);
+        const [ax, ay] = [cx + side * rx * (0.82 - k * 0.12), cy + ry * (0.15 + k * 0.28)];
+        const [kx, ky] = [ax + side * rx * (0.32 + k * 0.06), ay - ry * (0.3 - k * 0.12) + step2 * 0.3];
+        const [fx, fy] = [kx + side * rx * (0.16 + k * 0.05) + step2, f.floor - 1];
+        for (const [x0, y0, x1, y1] of [[ax, ay, kx, ky], [kx, ky, fx, fy]]) {
+          for (let p = 0; p <= 1; p += 0.08) c.disc(ease(x0, x1, p), ease(y0, y1, p), 0.8, mix(leg, INK, 0.65));
+        }
+        for (const [x0, y0, x1, y1] of [[ax, ay, kx, ky], [kx, ky, fx, fy]]) {
+          for (let p = 0; p <= 1; p += 0.08) c.put(ease(x0, x1, p), ease(y0, y1, p), leg);
+        }
+      }
+    }
+  }
   const shapeOf = (nx, ny) => {
     const angle = Math.atan2(ny, nx);
     const d = Math.hypot(nx, ny);
+    if (monster === "crab") return d < 1 + (ny < 0 ? 0.12 * Math.max(0, Math.cos(nx * 7.5)) * -ny : 0);
     if (monster === "cookie") return d < 1 + 0.06 * Math.sin(angle * 14 + wave * 2) + 0.04 * (hash(Math.floor(angle * 9 + 40)) - 0.5);
     if (monster === "slime") {
       const sx = ny > 0 ? nx / (1 + 0.32 * ny) : nx;
@@ -1281,8 +1332,14 @@ const torso = (c, f) => {
   };
   c.blob(cx, cy, rx, ry, body, shapeOf, {
     alpha: monster === "ghost" ? 0.88 : 1,
-    belly: monster === "cookie" || monster === "gremlin"
+    belly: monster === "cookie" || monster === "gremlin" || monster === "crab"
   });
+  if (monster === "crab") {
+    for (let i = 0; i < 5; i++) {
+      const [x, y] = [cx + (hash(i, 31) - 0.5) * rx * 1.3, cy - ry * (0.2 + hash(i, 32) * 0.5)];
+      c.put(x, y, mix(body, WHITE, 0.35));
+    }
+  }
   if (monster === "slime") {
     for (let i = 0; i < 4; i++) {
       const p = ((t * 0.02 + hash(i, 21)) % 1 + 1) % 1;
@@ -1375,11 +1432,20 @@ const eye = (c, x, y, r, look, lid, f, iris, big = false) => {
 const face = (c, f, s) => {
   const { t, monster, cx, cy, rx, ry, r0, body } = f;
   const m = mood(s, f);
-  const eyes = monster === "slime" ? [[cx, cy - ry * 0.28, 0]] : monster === "cookie" ? [[cx - rx * 0.32, cy - ry * 0.8, -1], [cx + rx * 0.32, cy - ry * 0.8, 1]] : [[cx - rx * 0.34, cy - ry * 0.22, -1], [cx + rx * 0.34, cy - ry * 0.22, 1]];
+  const eyes = monster === "slime" ? [[cx, cy - ry * 0.28, 0]] : monster === "crab" ? [[cx - rx * 0.3, cy - ry * 1.45, -1], [cx + rx * 0.3, cy - ry * 1.45, 1]] : monster === "cookie" ? [[cx - rx * 0.32, cy - ry * 0.8, -1], [cx + rx * 0.32, cy - ry * 0.8, 1]] : [[cx - rx * 0.34, cy - ry * 0.22, -1], [cx + rx * 0.34, cy - ry * 0.22, 1]];
   const re = eyeSize(f);
   const look = monster === "cookie" ? s.googly : s.gaze;
   const lid = m.eyes === "open" ? Math.max(s.lid, f.blink ? 1 : 0) : 0;
-  const iris = { cookie: INK, slime: 1989170, ghost: 9412607, gremlin: INK }[monster] ?? 6961951;
+  const iris = { cookie: INK, slime: 1989170, ghost: 9412607, gremlin: INK, crab: INK }[monster] ?? 6961951;
+  if (monster === "crab") {
+    for (const [ex, ey] of eyes) {
+      for (let y = ey; y <= cy - ry * 0.75; y += 0.5) {
+        c.put(ex - 0.6, y, mix(body, INK, 0.5));
+        c.put(ex + 0.6, y, mix(body, INK, 0.5));
+        c.put(ex, y, mix(body, BLACK, 0.1));
+      }
+    }
+  }
   if (monster !== "ghost" && s.blush > 0.05) {
     for (const side of [-1, 1]) {
       const [bx, by] = [cx + side * rx * 0.55, cy + ry * 0.14];
@@ -1566,7 +1632,7 @@ const WARDROBE = [
   { level: 25, key: "halo", part: "a halo" }
 ];
 const UNLOCK = Object.fromEntries(WARDROBE.map((one) => [one.key, one.level]));
-const eyeSize = ({ r0, monster }) => Math.max(2, r0 * (monster === "slime" ? 0.42 : monster === "cookie" ? 0.34 : 0.26));
+const eyeSize = ({ r0, monster }) => Math.max(2, r0 * (monster === "slime" ? 0.42 : monster === "cookie" ? 0.34 : monster === "crab" ? 0.3 : 0.26));
 const sprite = (c, rows, x, y, colors) => {
   const [w, h] = [rows[0].length, rows.length];
   const [x0, y0] = [Math.round(x - (w - 1) / 2), Math.round(y) - h + 1];
