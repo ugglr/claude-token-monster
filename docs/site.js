@@ -2,14 +2,9 @@
 // hooks/paint.ts, compiled to paint.js (the command is at the top of that file).
 // Each one gets its own scene, stepped at 10 frames a second like in the pane,
 // and fed a made-up session so it eats, burns, powers up and falls asleep.
-import { createScene, finishTurn, hit, paint, perk, serve, startTurn, step, toolColor, PALETTE, PROMPT, TEXT, THINKING } from './paint.js'
+import { createScene, finishTurn, hatch, hit, levelUp, paint, perk, pet as stroke, serve, startTurn, step, toolColor, typed, AMBER, BURP, BURST, EGG, LEVEL_UP, MINUTE, PALETTE, PROMPT, RED, SAD, STARVING, TEXT, THINKING, WARDROBE } from './paint.js'
 
 const FPS = 10
-const MINUTE = 60_000
-const BURST = 90
-const SAD = 15 * MINUTE
-const STARVING = 60 * MINUTE
-const BURP = MINUTE
 const COLORS = Object.keys(PALETTE)
 const WINDOWS = { five_hour: 'session', seven_day: 'weekly' }
 const still = matchMedia('(prefers-reduced-motion: reduce)')
@@ -31,7 +26,7 @@ const span = ms => {
   const hours = Math.floor(minutes / 60)
   return hours >= 24 ? `${Math.floor(hours / 24)}d${hours % 24}h` : hours > 0 ? `${hours}h${minutes % 60}m` : `${minutes}m`
 }
-const tone = pct => (pct >= 80 ? 'bad' : pct >= 50 ? 'warn' : 'ok')
+const tone = pct => (pct >= RED ? 'bad' : pct >= AMBER ? 'warn' : 'ok')
 const feeling = (belly, at) => {
   const idle = at - belly.fedAt
   if (belly.fill >= BURST) return { eye: '@', say: 'me gonna burst! /compact' }
@@ -45,7 +40,38 @@ const feeling = (belly, at) => {
 }
 const larder = limits => {
   const most = Math.max(0, ...limits.map(limit => limit.percentUsed))
-  return most >= 80 ? 'pantry almost empty! me ration' : most >= 50 ? 'pantry getting low...' : 'pantry full. feast time!'
+  return most >= RED ? 'pantry almost empty! me ration' : most >= AMBER ? 'pantry getting low...' : 'pantry full. feast time!'
+}
+// Super mode's line, as the mod words it.
+const superLine = (level, helpers) =>
+  level === 1
+    ? helpers === 0 ? 'SUPER MODE! three tools at once' : `SUPER MODE! me and ${helpers} helper${helpers === 1 ? '' : 's'}`
+    : level === 2 ? 'SUPER MODE 2!! power rising' : 'SUPER MODE 3!!! power maxed out'
+// Its answer to a pet, by how it took it, as the mod words it.
+const FUSSES = {
+  purr: ['hehe, that tickles', '*purr*', 'more pets pls'],
+  wiggle: ['*purrrr* me like you', 'hehe! again!', 'best human'],
+  spin: ['wheee! me LOVE you', '*happy spin*', 'best human EVER'],
+  stir: ['mmm... *purr*... zzz', '*smiles in its sleep*'],
+  plead: ['pets nice... but me so hungry', 'feed me tokens? pleeease'],
+}
+// The context by category, made up for the belly bar: a fixed system prompt, tools
+// and memory, the rest messages. The reserve before auto-compact sits at the far end.
+const RESERVE = { short: 'reserve', color: '#6b6f8a', share: 0.2 }
+const slicesOf = b => {
+  let left = b.tokens
+  const take = most => {
+    const n = Math.min(left, most)
+    left -= n
+    return n
+  }
+  const parts = [
+    { short: 'system', color: '#b59cff', tokens: take(9_000) },
+    { short: 'tools', color: '#5cc8ff', tokens: take(14_000) },
+    { short: 'memory', color: '#ffa94d', tokens: take(3_000) },
+  ]
+  parts.unshift({ short: 'messages', color: '#ffd166', tokens: left })
+  return parts.filter(part => part.tokens > 0).sort((x, y) => y.tokens - x.tokens)
 }
 const escape = text => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c])
 
@@ -90,6 +116,7 @@ class Pet {
     ]
     this.s = s
     this.doing = ''
+    this.chat = null
     this.gen = this.script(this)
   }
 
@@ -97,7 +124,7 @@ class Pet {
   belly(percent) {
     const b = this.s.belly
     b.percent = Math.round(Math.max(1, Math.min(100, percent)))
-    b.fill = Math.min(100, Math.round(percent * 1.25))
+    b.fill = Math.min(100, Math.round(percent / (1 - RESERVE.share)))
     b.tokens = Math.round((b.percent / 100) * b.window)
   }
 
@@ -147,17 +174,14 @@ class Pet {
 
   mood() {
     const s = this.s
+    if (this.chat !== null && s.tick < this.chat.until) return this.chat
     if (s.level === 0 || s.belly.fill >= BURST) return feeling(s.belly, s.at)
-    const helpers = s.minions
-    return {
-      eye: 'O',
-      say: [
-        '',
-        helpers === 0 ? 'SUPER MODE! three tools at once' : `SUPER MODE! me and ${helpers} helper${helpers === 1 ? '' : 's'}`,
-        'SUPER MODE 2!! power rising',
-        'SUPER MODE 3!!! power level over 9000',
-      ][s.level],
-    }
+    return { eye: 'O', say: superLine(s.level, s.minions) }
+  }
+
+  // Say something back for a few seconds, over its mood.
+  reply(eye, say, frames = 30) {
+    this.chat = { eye, say, until: this.s.tick + frames }
   }
 
   words() {
@@ -177,11 +201,38 @@ class Pet {
     }
     const chain = s.combo >= 2 ? `  on fire x${s.combo}` : ''
     const second = this.doing !== '' ? `> ${this.doing}${chain}` : b.ate > 0 ? `last bite +${kilo(b.ate)}, fed ${span(s.at - b.fedAt)} ago` : `fed ${span(s.at - b.fedAt)} ago`
+    // The belly bar split by category, the reserve at the far end; a legend under it.
+    const parts = slicesOf(b)
+    let room = width
+    const bar = parts.map(part => {
+      const cells = Math.min(room, Math.max(1, Math.round((part.tokens / b.window) * width)))
+      room -= cells
+      return `<span style="color:${part.color}">${'█'.repeat(cells)}</span>`
+    })
+    const reserve = Math.min(room, Math.round(RESERVE.share * width))
+    const belly = `<span class="dim">${'belly'.padEnd(8)}</span>${bar.join('')}<span class="dim">${'░'.repeat(room - reserve)}</span><span style="color:${RESERVE.color}">${'█'.repeat(reserve)}</span>${`${b.percent}%`.padStart(5)} ${kilo(b.tokens)}/${kilo(b.window)}`
+    const legend = []
+    let line = ''
+    let length = 0
+    for (const part of [...parts, { ...RESERVE, tokens: RESERVE.share * b.window }]) {
+      const text = `${part.short} ${kilo(part.tokens)}`
+      if (length > 0 && length + text.length + 4 > 8 + width + 16) {
+        legend.push(line)
+        line = ''
+        length = 0
+      }
+      line += `${length > 0 ? '  ' : ''}<span style="color:${part.color}">■</span> <span class="dim">${text}</span>`
+      length += text.length + 2 + (length > 0 ? 2 : 0)
+    }
+    legend.push(line)
+    const gift = WARDROBE.filter(item => item.level <= s.rank).at(-1)
     const lines = [
       `<span class="say-line" style="color:${tint}">${escape(say)}</span>`,
       `<span class="dim">${escape(second)}</span>`,
-      row('belly', b.percent, `${kilo(b.tokens)}/${kilo(b.window)}`),
+      belly,
+      ...legend,
       ...s.pantry.map(limit => row(WINDOWS[limit.kind] ?? limit.kind, limit.percentUsed, '')),
+      ...(s.rank > 0 ? [`<span class="dim">${`Lv ${s.rank}`.padEnd(8)}${gift ? gift.part : ''}</span>`] : []),
       `<span class="dim">${this.hour !== undefined ? `sky at ${hhmm(s.hour)}` : larder(s.pantry)}</span>`,
     ]
     const html = lines.join('\n')
@@ -472,6 +523,7 @@ const STATES = {
   sleep: loopForever(function* (p) {
     const s = p.s
     p.doing = ''
+    s.belly.fedAt = s.at
     s.activeAt = s.tick - 1745
     yield* wait(120)
     yield* wait(20, i => {
@@ -479,6 +531,69 @@ const STATES = {
       if (i % 3 === 0) serve(s, 2, PROMPT, false)
     })
     yield* wait(20)
+  }),
+  hello: loopForever(function* (p) {
+    const s = p.s
+    p.doing = ''
+    s.activeAt = s.tick - 1300
+    s.typedAt = s.tick - 1300
+    yield* wait(15)
+    if (typed(s)) p.reply('^', 'oh hi! you back!')
+    yield* wait(30, i => {
+      s.typedAt = s.tick
+      if (i % 3 === 0) serve(s, 2, PROMPT, false)
+    })
+    perk(s)
+    serve(s, 60, PROMPT)
+    yield* wait(30)
+  }),
+  antics: loopForever(function* (p) {
+    const s = p.s
+    p.doing = ''
+    s.activeAt = s.tick
+    yield* wait(8)
+    s.anticAt = s.tick
+    yield* wait(50)
+  }),
+  frenzy: loopForever(function* (p) {
+    const s = p.s
+    startTurn(s)
+    s.level = 2
+    s.minions = 2
+    p.doing = 'Agent Review the diff'
+    yield* wait(70, i => p.eat(70, [TEXT, THINKING, toolColor('Agent'), toolColor('Bash')][i % 4]))
+    s.level = 0
+    s.minions = 0
+    p.doing = ''
+    finishTurn(s)
+    yield* wait(50)
+  }),
+  pet: loopForever(function* (p) {
+    const s = p.s
+    s.affection = 0
+    yield* wait(10)
+    for (let i = 0; i < 5; i++) {
+      const fuss = stroke(s, s.at)
+      p.reply('^', FUSSES[fuss][i % FUSSES[fuss].length], 22)
+      yield* wait(22)
+    }
+    yield* wait(40)
+  }),
+  levels: loopForever(function* (p) {
+    const s = p.s
+    s.rank = 1
+    yield* wait(10)
+    for (const { level } of WARDROBE) {
+      levelUp(s, level)
+      yield* wait(LEVEL_UP + 25)
+    }
+  }),
+  egg: loopForever(function* (p) {
+    const s = p.s
+    s.eggDue = s.at
+    hatch(s, s.at)
+    p.reply('o', '*crack* ... *crack*', EGG)
+    yield* wait(EGG + 40)
   }),
   sky: loopForever(function* (p) {
     yield* wait(240, () => {
@@ -501,6 +616,8 @@ const STATES = {
     yield* wait(30)
   }),
 }
+
+STATES.bar = STATES.size
 
 // Strays and the cast: a life of their own, plus whatever you feed them.
 const life = function* (p) {
@@ -560,8 +677,12 @@ const moping = function* (p) {
 
 const dozing = function* (p) {
   while (true) {
+    // Only a well fed monster dozes off.
     p.s.activeAt = p.s.tick - 1900
-    while (p.s.tick - p.s.activeAt >= 1800) yield
+    while (p.s.tick - p.s.activeAt >= 1800) {
+      p.s.belly.fedAt = p.s.at
+      yield
+    }
     yield* wait(300)
   }
 }
@@ -640,6 +761,25 @@ if (diet && buddy) {
   let eaten = new Set()
   let armed = []
   const list = $('[data-dishes]', diet)
+  const kindList = $('[data-kinds]', diet)
+  // Eating by kind: a for every tool result, then one letter per tool, biggest first.
+  const KEYS = ['a', 'b', 'f', 'g', 'h', 'j']
+  const kinds = () => {
+    const left = DISHES.map((_, i) => i).filter(i => !eaten.has(i))
+    const byTool = new Map()
+    for (const i of left) byTool.set(DISHES[i][0], [...(byTool.get(DISHES[i][0]) ?? []), i])
+    return [
+      { name: 'all tool results', ids: left },
+      ...[...byTool].map(([tool, ids]) => ({ name: tool, ids })).sort((x, y) => saving(y.ids) - saving(x.ids)),
+    ].filter(kind => kind.ids.length > 0).slice(0, KEYS.length)
+  }
+  const pickKind = k => {
+    const kind = kinds()[k]
+    if (!kind || armed.length > 0) return
+    const all = kind.ids.every(i => picked.has(i))
+    for (const i of kind.ids) all ? picked.delete(i) : picked.add(i)
+    render()
+  }
   const contextLine = $('[data-diet-context]', diet)
   const eatButton = $('[data-eat]', diet)
   const armedLine = $('[data-armed]', diet)
@@ -663,6 +803,21 @@ if (diet && buddy) {
       li.append(button)
       list.append(li)
     })
+    kindList.innerHTML = ''
+    kinds().forEach((kind, k) => {
+      const li = document.createElement('li')
+      const button = document.createElement('button')
+      const all = kind.ids.every(i => picked.has(i))
+      button.type = 'button'
+      button.className = 'dish'
+      button.disabled = armed.length > 0
+      button.setAttribute('aria-pressed', String(all))
+      button.innerHTML = `<span class="name">${KEYS[k]} ${all ? '[x]' : '[ ]'} ${escape(kind.name)}</span><span class="size">~${kilo(saving(kind.ids))}</span>`
+      button.addEventListener('click', () => pickKind(k))
+      li.append(button)
+      kindList.append(li)
+    })
+    $('[data-edible]', diet).textContent = kilo(saving(DISHES.map((_, i) => i).filter(i => !eaten.has(i))))
     const now = `${Math.round((context / WINDOW) * 100)}% ${kilo(context)}/${kilo(WINDOW)}`
     const after = picked.size === 0 ? '' : ` -> ~${Math.round(((context - saving(picked)) / WINDOW) * 100)}% after`
     contextLine.textContent = `context ${now}${after}`
@@ -722,6 +877,9 @@ if (diet && buddy) {
     if (digit >= 1 && digit <= DISHES.length) toggle(digit - 1)
     else if (e.key === 'e') arm()
     else if (e.key === 'x' && armed.length > 0) disarm()
+    else if (KEYS.includes(e.key)) pickKind(KEYS.indexOf(e.key))
+    else if (e.key === 'r') render()
+    else if (e.key === 'q') $('.screen', buddy.root).focus()
     else return
     e.preventDefault()
   })
@@ -806,7 +964,7 @@ const band = $('[data-band]')
 const drawBand = () => {
   if (!band || !hero) return
   const s = hero.s
-  const { eye, say: words } = s.level > 0 && s.belly.fill < BURST ? { eye: 'O', say: `SUPER MODE ${s.level}` } : feeling(s.belly, s.at)
+  const { eye, say: words } = s.level > 0 && s.belly.fill < BURST ? { eye: 'O', say: superLine(s.level, s.minions) } : feeling(s.belly, s.at)
   const head = `(${eye})(${eye}) ${hero.doing !== '' ? `> ${hero.doing}${s.combo >= 2 ? ` on fire x${s.combo}` : ''}` : words}`
   const filled = Math.round((s.belly.percent / 100) * 8)
   const html = `<span class="face" style="color:#3d7bff">${escape(head)}</span> <span class="${tone(s.belly.percent)}">${'█'.repeat(filled)}</span><span class="dim">${'░'.repeat(8 - filled)}</span> ${s.belly.percent}%<span class="dim">${s.pantry.map(l => `  ${WINDOWS[l.kind]} ${l.percentUsed}%`).join('')}  /token-monster</span>`
