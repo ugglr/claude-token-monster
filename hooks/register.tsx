@@ -292,7 +292,7 @@ export const register: Register = on => {
     const words = e.args.toLowerCase().split(/\s+/).filter(Boolean)
 
     if (words[0] === 'diet') {
-      await $.ui.open({ id: DIET, title: 'Diet', columns: 48 })
+      await $.ui.open({ id: DIET, title: 'Diet', columns: 48, focus: true, closeOnEscape: true })
 
       return { text: 'Pick what Token Monster eats.' }
     }
@@ -479,7 +479,7 @@ export const register: Register = on => {
             onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
           />
           <Text> </Text>
-          <Button key="diet" label="Diet" hotkey="d" onPress={() => $.ui.open({ id: DIET, title: 'Diet', columns: 48 })} />
+          <Button key="diet" label="Diet" hotkey="d" onPress={() => $.ui.open({ id: DIET, title: 'Diet', columns: 48, focus: true, closeOnEscape: true })} />
         </Box>
       </Box>
     )

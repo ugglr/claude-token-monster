@@ -12,9 +12,11 @@ import { kilo } from './format'
 // The person's next /compact is answered here, with the armed results eaten.
 export const DIET = 'token-monster-diet'
 
-const COURSES = 12
+// Nine, so each has a digit to press.
+const COURSES = 9
 const EATEN = '[Token Monster ate this '
-const LABELS = ['file_path', 'command', 'url', 'pattern', 'query', 'description', 'prompt']
+// What a row says about the call: a Bash description reads better than its command.
+const LABELS = ['file_path', 'description', 'url', 'pattern', 'query', 'command', 'prompt']
 
 const menu = atom({ plugin: 'token-monster', key: 'menu' } as const, [])
 const picked = atom({ plugin: 'token-monster', key: 'picked' } as const, [])
@@ -26,6 +28,10 @@ const estimate = (text: string) => Math.ceil(text.length / 4)
 
 export const label = (input: Record<string, unknown>) =>
   String(LABELS.map(name => input[name]).find(value => typeof value === 'string') ?? '')
+
+// mcp__claude_ai_brainlink__get_started reads as brainlink.get_started.
+const short = (tool: string) =>
+  tool.startsWith('mcp__') ? tool.split('__').slice(1).join('.').replace(/^claude_ai_/, '') : tool
 
 const stub = (tool: string, text: string) =>
   `${EATEN}${tool} result (~${kilo(estimate(text))} tokens) to free context. Run the tool again if you need it.]`
@@ -78,7 +84,7 @@ const fill = async ($: EngineInterface) => {
     for (const use of message.toolUses) {
       if (use.text === undefined || use.text.startsWith(EATEN) || unsafe.has(use.tool_use_id)) continue
 
-      dishes.push({ id: use.tool_use_id, tool: use.tool, label: label(use.input), tokens: estimate(use.text) })
+      dishes.push({ id: use.tool_use_id, tool: short(use.tool), label: label(use.input), tokens: estimate(use.text) })
     }
   }
 
@@ -146,6 +152,7 @@ export const registerDiet = (on: On) => {
     return (
       <Box flexDirection="column">
         <Text bold>Pick what me eat, biggest first</Text>
+        {!e.props.isFocused && <Text dimColor>ctrl+x tab or a click to give me the keys</Text>}
         {ready.length > 0 && (
           <Box>
             <Text color="yellow">Armed: me eat {ready.length} on your next /compact </Text>
@@ -156,11 +163,14 @@ export const registerDiet = (on: On) => {
         {dishes.map((dish, index) => {
           const size = ` ~${kilo(dish.tokens)}`
           const name = `${ids.includes(dish.id) ? '[x]' : '[ ]'} ${dish.tool} ${dish.label}`
+          const width = room - size.length - 3
 
           return (
             <Button
               key={`dish-${index}`}
-              label={`${name.slice(0, room - size.length).padEnd(room - size.length)}${size}`}
+              plain
+              hotkey={String(index + 1)}
+              label={`${name.slice(0, width).padEnd(width)}${size}`}
               onPress={() => update($, picked, pick(dish.id))}
             />
           )
@@ -176,7 +186,7 @@ export const registerDiet = (on: On) => {
           <Text> </Text>
           <Button key="refresh" label="Refresh" hotkey="r" onPress={() => fill($)} />
         </Box>
-        <Text dimColor>Eat arms them; your /compact eats them. Each becomes a short note.</Text>
+        <Text dimColor>1-9 pick, e eat, Esc close. Eat arms them; your /compact eats them.</Text>
       </Box>
     )
   })

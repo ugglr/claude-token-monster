@@ -65,6 +65,7 @@ test('the diet lists tool results biggest first and picks one', async ($, on) =>
 
     expect((await ui.find({ key: 'dish-0' }))?.text).toMatch(/^\[ \] Read src\/huge.ts +~10k$/)
     expect((await ui.find({ key: 'dish-1' }))?.text).toMatch(/^\[ \] Bash ls +~100$/)
+    expect((await ui.find({ key: 'dish-0' }))?.props).toMatchObject({ hotkey: '1', plain: true })
 
     await ui.press({ key: 'dish-0' })
     expect((await ui.find({ key: 'dish-0' }))?.text).toMatch(/^\[x\]/)
