@@ -1,11 +1,16 @@
 {
   "name": "token-monster",
-  "owner": { "name": "Carl Igelström" },
+  "owner": {
+    "name": "Carl Igelström"
+  },
   "plugins": [
     {
       "name": "token-monster",
       "source": "./",
-      "description": "A monster in a side pane that eats tokens and shows how full the context is"
+      "description": "A pixel-art monster in a side pane that eats tokens and shows context, limits and activity at a glance"
     }
-  ]
+  ],
+  "metadata": {
+    "description": "Token Monster: a pixel-art Tamagotchi for your Claude Code context window"
+  }
 }

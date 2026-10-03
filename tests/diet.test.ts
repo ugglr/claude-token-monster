@@ -38,12 +38,12 @@ test('the diet lists tool results biggest first and picks one', async ($, on) =>
       props: { title: 'Diet', isFocused: true, bodyColumns: 48, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
     })
 
-    expect((await ui.find({ key: 'dish-0' }))?.text).toMatch(/^\[ \] Read src\/huge.ts +~10.0k$/)
+    expect((await ui.find({ key: 'dish-0' }))?.text).toMatch(/^\[ \] Read src\/huge.ts +~10k$/)
     expect((await ui.find({ key: 'dish-1' }))?.text).toMatch(/^\[ \] Bash ls +~100$/)
 
     await ui.press({ key: 'dish-0' })
     expect((await ui.find({ key: 'dish-0' }))?.text).toMatch(/^\[x\]/)
-    expect((await ui.find({ key: 'eat' }))?.text).toBe('Eat 1 (~10.0k)')
+    expect((await ui.find({ key: 'eat' }))?.text).toBe('Eat 1 (~10k)')
     await ui.press({ key: 'dish-0' })
   }
 })
@@ -55,7 +55,7 @@ test('eating stubs only the picked results and leaves every other message whole'
   expect(after[1]).toBe(ROWS[1])
   expect(after[2]?.handle).toBeUndefined()
   expect(after[2]?.toolResults?.[0]?.text).toBe(
-    '[Token Monster ate this Read result (~10.0k tokens) to free context. Run the tool again if you need it.]',
+    '[Token Monster ate this Read result (~10k tokens) to free context. Run the tool again if you need it.]',
   )
   expect(after[2]?.toolResults?.[1]).toBe(ROWS[2]?.toolResults?.[1])
   expect(stubbed(ROWS, new Set())).toEqual(ROWS)

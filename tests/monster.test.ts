@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, SessionContextUsage } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -13,27 +13,35 @@ const pane = ($: Engine, surface: (typeof SURFACES)[number]) =>
     props: {
       title: 'Token Monster',
       isFocused: true,
-      bodyColumns: 24,
+      bodyColumns: 46,
       placement: 'dock',
-      scroll: { offset: 0, bodyRows: 30 },
+      scroll: { offset: 0, bodyRows: 40 },
       view: {},
     },
   })
 
 const engine = (on: On) => {
   on('session.measure', (_, e) => ({ changed: e.changed }))
+  on('ui.blit', () => ({ value: {} }))
 
   return mock.clock(on)
 }
 
-const measure = ($: Engine, tokens: number, rateLimits: { kind: string; percentUsed: number }[] = []) =>
+const context = (tokens: number | undefined): SessionContextUsage =>
+  tokens === undefined
+    ? { window: 200_000 }
+    : { tokens, window: 200_000, percent: Math.round((tokens / 200_000) * 100) }
+
+const measure = ($: Engine, tokens: number | undefined, rateLimits: { kind: string; percentUsed: number }[] = []) =>
   $.session.measure({
-    context: { tokens, window: 200_000, percent: Math.round((tokens / 200_000) * 100) },
+    context: context(tokens),
     rateLimits,
     changed: rateLimits.length > 0 ? ['context', 'rateLimits'] : ['context'],
   })
 
-test('the monster eats what the context grew by and shows the fill', async ($, on) => {
+const text = (value: string | RegExp) => ({ type: 'Text', text: value })
+
+test('the readout shows the belly, its fill and the last bite, on every surface', async ($, on) => {
   engine(on)
   await measure($, 20_000)
   await measure($, 120_000)
@@ -41,95 +49,150 @@ test('the monster eats what the context grew by and shows the fill', async ($, o
   for (const surface of SURFACES) {
     const ui = await pane($, surface)
 
-    expect(await ui.find({ type: 'Text', text: 'om nom nom nom' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '60% 120.0k/200.0k' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'ate 100.0k' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '( O )( O )' })).toBeDefined()
+    expect(await ui.find(text('om nom nom nom'))).toBeDefined()
+    expect(await ui.find({ type: 'Box', text: /^belly +█+░+ +60% 120k\/200k$/ })).toBeDefined()
+    expect(await ui.find(text('last bite +100k, fed 0m ago'))).toBeDefined()
+
+    if (surface === 'terminal') {
+      expect((await ui.find({ type: 'Raster' }))?.props).toMatchObject({ key: 'sprite', columns: 46, rows: 16 })
+    } else {
+      expect(await ui.find(text(' ( O )( O )'))).toBeDefined()
+    }
+
+    await ui.unmount()
   }
 })
 
-test('a full belly asks for /compact, and a compaction is a burp', async ($, on) => {
+test('a full belly asks for /compact; a compaction burps and is not counted as a meal', async ($, on) => {
   engine(on)
+  on('session.compact', () => ({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] }))
+  const ui = await pane($, 'desktop')
+
   await measure($, 190_000)
+  expect(await ui.find(text('me gonna burst! /compact'))).toBeDefined()
 
-  for (const surface of SURFACES) {
-    const ui = await pane($, surface)
+  await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'long story', toolUses: [] }] })
+  await measure($, undefined)
+  await measure($, 30_000)
 
-    expect(await ui.find({ text: /burst/ })).toBeDefined()
-    await measure($, 30_000)
-    expect(await ui.find({ text: /burp/ })).toBeDefined()
-    expect(await ui.find({ text: /^ate/ })).toBeUndefined()
-    await measure($, 190_000)
-  }
+  expect(await ui.find(text('*burp* me feel lighter'))).toBeDefined()
+  expect(await ui.find(text(/last bite/))).toBeUndefined()
+})
+
+test('tokens dropping without a compaction event is a burp too', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  await measure($, 120_000)
+  await measure($, 30_000)
+
+  expect(await ui.find(text('*burp* me feel lighter'))).toBeDefined()
 })
 
 test('the buttons swap the monster and its color', async ($, on) => {
+  engine(on)
   mock.store(on)
+  const ui = await pane($, 'desktop')
+  const before = await ui.find(text('/          \\'))
 
-  for (const surface of SURFACES) {
-    const ui = await pane($, surface)
-    const before = await ui.find({ type: 'Text', text: '/          \\' })
+  await ui.press({ key: 'monster' })
+  expect(await ui.find(text('/          \\'))).toBeUndefined()
+  expect(await ui.find(text('   ( o  o )'))).toBeDefined()
 
-    await ui.press({ key: 'monster' })
-    expect(await ui.find({ type: 'Text', text: '/          \\' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: '  /  o  \\' })).toBeDefined()
-
-    await ui.press({ key: 'color' })
-    expect((await ui.find({ type: 'Text', text: '  /  o  \\' }))?.props.color).not.toBe(before?.props.color)
-
-    await ui.press({ key: 'monster' })
-    await ui.press({ key: 'monster' })
-  }
+  await ui.press({ key: 'color' })
+  expect((await ui.find(text('   ( o  o )')))?.props.color).not.toBe(before?.props.color)
 })
 
-test('the monster chews while a turn runs', async ($, on) => {
-  const clock = mock.clock(on)
+test('it chews through a turn, and a subagent finishing does not stop it', async ($, on) => {
+  engine(on)
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
-  const ui = await pane($, 'terminal')
+  on('turn.complete', () => ({ text: '' }))
+  const ui = await pane($, 'desktop')
+  const chewing = () => ui.find(text('|  .----.  |'))
 
   await $.turn.start({ text: 'hi', turnId: 't1' })
-  expect(await ui.find({ type: 'Text', text: '|  ------  |' })).toBeDefined()
+  expect(await chewing()).toBeDefined()
+  expect(await ui.find(text('> thinking...'))).toBeDefined()
 
-  await clock.advance(350)
-  expect(await ui.find({ type: 'Text', text: '|  .----.  |' })).toBeDefined()
+  const done = { answer: '', durationMs: 1, isAborted: false, reason: 'answer' as const }
 
-  await clock.advance(350)
-  expect(await ui.find({ type: 'Text', text: '|  ------  |' })).toBeDefined()
+  await $.turn.complete({ ...done, turnId: 'sub-turn', agentId: 'sub1' })
+  expect(await chewing()).toBeDefined()
+
+  await $.turn.complete({ ...done, turnId: 't1' })
+  expect(await chewing()).toBeUndefined()
 })
 
 test('an unfed monster gets sad, then starves, and cheers up when fed', async ($, on) => {
   const clock = engine(on)
-  const ui = await pane($, 'terminal')
+  const ui = await pane($, 'desktop')
 
   await measure($, 20_000)
   await clock.advance(16 * 60_000)
   await measure($, 20_000)
-  expect(await ui.find({ type: 'Text', text: 'me sad. no tokens :(' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: ' ( T )( T )' })).toBeDefined()
+  expect(await ui.find(text('me sad. no tokens :('))).toBeDefined()
+  expect(await ui.find(text(' ( T )( T )'))).toBeDefined()
 
   await clock.advance(45 * 60_000)
   await measure($, 20_000)
-  expect(await ui.find({ type: 'Text', text: /starving/ })).toBeDefined()
+  expect(await ui.find(text(/starving/))).toBeDefined()
 
   await measure($, 25_000)
-  expect(await ui.find({ type: 'Text', text: 'ME WANT TOKENS!' })).toBeDefined()
+  expect(await ui.find(text('ME WANT TOKENS!'))).toBeDefined()
 })
 
-test('the pantry shows the session and weekly limits', async ($, on) => {
+test('the pantry shows the session, weekly and spend limits', async ($, on) => {
   engine(on)
-  const ui = await pane($, 'terminal')
+  const ui = await pane($, 'desktop')
 
   await measure($, 20_000, [
     { kind: 'five_hour', percentUsed: 92 },
     { kind: 'seven_day', percentUsed: 40 },
+    { kind: 'spend_limit', percentUsed: 10 },
   ])
-  expect(await ui.find({ type: 'Box', text: /^session .* 92%$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Box', text: /^weekly .* 40%$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'pantry almost empty! me ration' })).toBeDefined()
+  expect(await ui.find({ type: 'Box', text: /^session +█+░+ +92% $/ })).toBeDefined()
+  expect(await ui.find({ type: 'Box', text: /^weekly +█+░+ +40% $/ })).toBeDefined()
+  expect(await ui.find({ type: 'Box', text: /^spend +█+░+ +10% $/ })).toBeDefined()
+  expect(await ui.find(text('pantry almost empty! me ration'))).toBeDefined()
 
-  await measure($, 20_000, [
-    { kind: 'five_hour', percentUsed: 5 },
-    { kind: 'seven_day', percentUsed: 10 },
-  ])
-  expect(await ui.find({ type: 'Text', text: 'pantry full. feast time!' })).toBeDefined()
+  await measure($, 20_000, [{ kind: 'five_hour', percentUsed: 5 }])
+  expect(await ui.find(text('pantry full. feast time!'))).toBeDefined()
+})
+
+test('session.start restores the saved look', async ($, on) => {
+  engine(on)
+  mock.store(on, { look: { monster: 'ghost', color: 'red' } })
+  on('session.usage', () => ({ value: { startedAt: 0, context: context(10_000), rateLimits: [] } }))
+  on('command.register', () => ({ value: {} }) as never)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', () => ({ cwd: '/' }))
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true } as never)
+  expect(await (await pane($, 'desktop')).find(text('  / o   o \\'))).toBeDefined()
+})
+
+test('a stale saved look falls back to the default', async ($, on) => {
+  engine(on)
+  mock.store(on, { look: { monster: 'chomper', color: 'red' } })
+  on('session.usage', () => ({ value: { startedAt: 0, context: context(10_000), rateLimits: [] } }))
+  on('command.register', () => ({ value: {} }) as never)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', () => ({ cwd: '/' }))
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true } as never)
+  expect(await (await pane($, 'desktop')).find(text(' ( o )( o )'))).toBeDefined()
+})
+
+test('/token-monster swaps by name and lists the options for an unknown word', async ($, on) => {
+  engine(on)
+  mock.store(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const run = (args: string) =>
+    $.command.run({ command: 'token-monster', args, origin: 'user', presentation: { layout: 'fullscreen', columns: 200 } } as never)
+
+  expect((await run('dragon')).text).toBe(
+    'Me not know dragon. Monsters: cookie, slime, ghost, gremlin. Colors: blue, cyan, green, yellow, magenta, red, white. Or: diet.',
+  )
+  expect((await run('Gremlin GREEN')).text).toBe('Token Monster is hungry.')
+  expect(await (await pane($, 'desktop')).find(text(' |  o   o  |'))).toBeDefined()
 })
