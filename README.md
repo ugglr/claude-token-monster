@@ -1,5 +1,7 @@
 # Claude Token Monster
 
+[![Dad approved](https://img.shields.io/badge/Dad-approved-brightgreen)](https://github.com/ugglr/dad)
+
 A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your tokens. It is also a dashboard: one glance at the monster tells you how full your context is, how close you are to your limits, and what Claude is doing right now.
 
 ![Token Monster eating through a session](media/demo.gif)
@@ -34,7 +36,7 @@ weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
 
 Today you can only `/clear` or `/compact` the whole conversation. The diet lets you pick what goes. Press `d` in the pane, or run `/token-monster diet`, to list the biggest tool results in the conversation (file reads, command output, web pages). Tick the ones you no longer need and press **Eat**.
 
-Eat arms the diet and puts `/compact` in your prompt. Press Enter, and instead of summarizing the conversation, Token Monster replaces each picked result with a short note, so the model knows something was there and can run the tool again if it needs it. **Cancel** in the pane disarms it, and an automatic compaction is never touched.
+Eat arms the diet and puts `/compact` in your prompt. Press Enter, and instead of summarizing the conversation, Token Monster replaces each picked result with a short note, so the model knows something was there and can run the tool again if it needs it. **Cancel** in the pane disarms it, and an automatic compaction is never touched. If the picked results are already gone (an earlier compaction or `/clear` took them), the diet disarms and your `/compact` summarizes as usual.
 
 What changes, exactly: each message holding an eaten result is rebuilt from its text. The diet only offers results whose message holds no image or document, so nothing else in it is lost; several text blocks in such a message are joined into one. Every other message stays exactly as it was. The next turn reads the context uncached once.
 
