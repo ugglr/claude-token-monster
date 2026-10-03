@@ -32,10 +32,31 @@ om nom nom nom
 belly   ████████████░░░░░░░░  62% 124k/200k
 session ███████░░░░░░░░░░░░░  35% 2h14m
 weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
+Lv 7    ━━━━━━━━━─────────── 912k to Lv 8
 [Monster] [Color] [Diet: free context]
 ```
 
 ![Every monster and mood](media/moods.png)
+
+## It grows up with you
+
+Every token it eats counts toward its level, across all your sessions: the stream, tool results and your prompts. The first levels come within the first hour of work, the later ones take days and then weeks. The readout shows the level and how far it is to the next, and a small badge sits in the corner of the sprite.
+
+A level-up is a moment: a flash, a beam of light, a spinning jump, and LV UP rising behind it. On the way it earns things to wear, and keeps them, on every monster:
+
+| Level | It gets |
+| --- | --- |
+| 3 | a bow tie |
+| 6 | a propeller cap, which spins as it eats |
+| 10 | a crown, in place of the cap |
+| 15 | a cape that sways and billows |
+| 25 | a glowing halo |
+
+![A level-up](media/levelup.gif)
+
+Each new session starts with an egg in the monster's color. It wobbles, cracks, glows through the cracks and bursts, and the monster pops out cheering. Open the pane more than 20 seconds after the session starts and the egg is skipped; a hot reload never hatches it again.
+
+![The hatch](media/hatch.gif)
 
 ## Put it on a diet
 
@@ -115,7 +136,7 @@ Mods are not sandboxed, so read the code before you install any mod. Here is eve
 - **Your prompt while you type it**, only to notice that you are typing.
 - **The conversation's tool results**, when you open the diet, to list them; and on a diet `/compact`, the conversation, to replace the results you picked.
 
-It stores only your monster and color choice, and sends nothing anywhere: there is no network call in the code.
+It stores only your monster and color choice and the number of tokens it has eaten, and sends nothing anywhere: there is no network call in the code.
 
 ## How it was built
 
@@ -137,8 +158,9 @@ It stores only your monster and color choice, and sends nothing anywhere: there 
 - A diet meal rebuilds each message that held an eaten result from its text, joining text blocks, and the next turn reads the context uncached once.
 - The band above the prompt is shared: when another mod draws there, only one of them shows.
 - Combos break after a 4 second pause. The sky goes by the clock of the machine Claude Code runs on. Super mode counts running subagents from the agent list, so it can take a moment to power down after a background agent finishes.
-- The animation and combo state live in memory and start over when the mod reloads; your monster and color are kept.
-- Tested with 34 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
+- The animation and combo state live in memory and start over when the mod reloads; your monster, color and level are kept. Eaten tokens are written to the store at most every 30 seconds, so a reload can lose up to that much.
+- The level counts the same estimate the animation does, at about four characters a token, not your bill.
+- Tested with 41 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
 
 ## Dependencies
 

@@ -32,6 +32,9 @@ declare module 'claude-code' {
       view: string
       level: number
       combo: number
+      xp: number
+      born: number | null
+      hatching: boolean
     }
   }
 }
