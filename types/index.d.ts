@@ -15,6 +15,9 @@ export type Belly = {
 }
 export type Look = { monster: string; color: string }
 export type Limit = { kind: string; percentUsed: number; resetsAt?: string }
+// One category of the context window, as /context lists it: `used`, `free`, or the
+// auto-compact `buffer`.
+export type Slice = { name: string; tokens: number; kind: string }
 export type Dish = { id: string; tool: string; label: string; tokens: number }
 
 declare module 'claude-code' {
@@ -30,6 +33,7 @@ declare module 'claude-code' {
       armed: string[]
       serving: number
       view: string
+      slices: Slice[]
       level: number
       combo: number
     }

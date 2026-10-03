@@ -16,8 +16,12 @@ import { PANE, PANE_OPEN, isDietWord, kilo, tokens } from './format'
 // not 'diet'. Earlier versions opened a pane under this id; session.start closes it.
 export const OLD_DIET = 'token-monster-diet'
 
-// Nine, so each has a digit to press.
+// Nine rows, so each has a digit to press; the whole menu, for eating by kind, up to a bound.
 const COURSES = 9
+const MENU = 400
+// Keys for eating by kind: a for every tool result, then one per tool, biggest first.
+// Clear of the diet's own keys (1-9, e, r, q, x).
+const KINDS = ['a', 'b', 'f', 'g', 'h', 'j']
 const EATEN = '[Token Monster ate this '
 // What a row says about the call: a Bash description reads better than its command.
 const LABELS = ['file_path', 'description', 'url', 'pattern', 'query', 'command', 'prompt']
@@ -95,7 +99,7 @@ const fill = async ($: EngineInterface) => {
     }
   }
 
-  await update($, menu, () => dishes.sort((a, b) => b.tokens - a.tokens).slice(0, COURSES))
+  await update($, menu, () => dishes.sort((a, b) => b.tokens - a.tokens).slice(0, MENU))
   await update($, picked, () => [])
 }
 
@@ -107,6 +111,10 @@ const showDiet = async ($: EngineInterface) => {
 const hideDiet = async ($: EngineInterface) => {
   await update($, view, () => 'monster')
 }
+
+// Picks every one of `group`, or unpicks them all when they already are.
+const pickAll = (group: readonly string[]) => (ids: string[]) =>
+  group.every(id => ids.includes(id)) ? ids.filter(id => !group.includes(id)) : [...new Set([...ids, ...group])]
 
 const pick = (id: string) => (ids: string[]) => (ids.includes(id) ? ids.filter(one => one !== id) : [...ids, id])
 
@@ -203,11 +211,24 @@ export const registerDiet = (on: On) => {
       full === null || !full.known || saving === 0
         ? ''
         : ` -> ~${Math.round((Math.max(0, full.tokens - saving) / full.window) * 100)}% after`
+    const edible = dishes.reduce((sum, dish) => sum + dish.tokens, 0)
+    const byTool = new Map<string, string[]>()
+
+    for (const dish of dishes) byTool.set(dish.tool, [...(byTool.get(dish.tool) ?? []), dish.id])
+
+    const weigh = (group: readonly string[]) => dishes.filter(dish => group.includes(dish.id)).reduce((sum, dish) => sum + dish.tokens, 0)
+    const kinds = [
+      { name: 'all tool results', ids: dishes.map(dish => dish.id) },
+      ...[...byTool].map(([tool, group]) => ({ name: tool, ids: group })).sort((a, b) => weigh(b.ids) - weigh(a.ids)),
+    ].slice(0, KINDS.length)
 
     return (
       <Box flexDirection="column">
         <Text bold>Free up this conversation's context</Text>
-        <Text dimColor>These tool results sit in the context right now. Pick what me eat, biggest first.</Text>
+        <Text dimColor>
+          Tool results are the part of the context me can eat: ~{kilo(edible)} right now. The system prompt, tools,
+          memory and skills belong to Claude Code.
+        </Text>
         <Text>
           context {now}
           {after}
@@ -220,7 +241,24 @@ export const registerDiet = (on: On) => {
           </Box>
         )}
         {dishes.length === 0 && <Text dimColor>No tool results to eat yet.</Text>}
-        {dishes.map((dish, index) => {
+        {dishes.length > 0 && (
+          <Box flexWrap="wrap" width={room}>
+            <Text dimColor>by kind </Text>
+            {kinds.map((kind, index) => (
+              <Box marginRight={2}>
+                <Button
+                  key={`kind-${index}`}
+                  plain
+                  hotkey={KINDS[index]}
+                  label={`${kind.ids.every(id => ids.includes(id)) ? '[x]' : '[ ]'} ${kind.name} ~${kilo(weigh(kind.ids))}`}
+                  onPress={() => update($, picked, pickAll(kind.ids))}
+                />
+              </Box>
+            ))}
+          </Box>
+        )}
+        {dishes.length > 0 && <Text dimColor>biggest</Text>}
+        {dishes.slice(0, COURSES).map((dish, index) => {
           const size = ` ~${kilo(dish.tokens)}`
           const name = `${ids.includes(dish.id) ? '[x]' : '[ ]'} ${dish.tool} ${dish.label}`
           const width = room - size.length - 3

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage, Timer } from 'claude-code'
 
-import type { Belly, Limit, Look } from '../types'
+import type { Belly, Limit, Look, Slice } from '../types'
 import { OLD_DIET, label, registerDiet } from './diet'
 import { PANE, PANE_OPEN, isDietWord, kilo, tokens } from './format'
 import {
@@ -127,6 +127,8 @@ const level = atom({ plugin: 'token-monster', key: 'level' } as const, 0)
 // The running combo for the readout: set at each hit, cleared when the chain's window
 // lapses or the turn ends. The sprite draws its own from the scene.
 const combo = atom({ plugin: 'token-monster', key: 'combo' } as const, 0)
+// The context window by category, for the stacked belly bar.
+const slices = atom({ plugin: 'token-monster', key: 'slices' } as const, [])
 // Which view the pane shows; the diet module draws 'diet' (see hooks/diet.tsx).
 const view = atom({ plugin: 'token-monster', key: 'view' } as const, 'monster')
 
@@ -205,13 +207,14 @@ const clocked = async ($: EngineInterface) => {
   return at
 }
 
-// The auto-compact point, read from a local estimate (`summary` sends no request):
-// again when the window changes (a new model), and every 5 minutes, which picks
-// up auto-compact turned on or off in /config.
+// The window by category and the auto-compact point, from a local estimate
+// (`summary` sends no request): when the window changes (a new model), and at
+// most every 20 seconds as the context grows, which also picks up auto-compact
+// turned on or off in /config.
 let gauged: { window: number; at: number | null; readAt: number } = { window: 0, at: null, readAt: -Infinity }
 
 const gauge = async ($: EngineInterface, window: number, now: number) => {
-  if (gauged.window !== window || now - gauged.readAt > 5 * MINUTE) {
+  if (gauged.window !== window || now - gauged.readAt > 20_000) {
     try {
       const { breakdown } = (await $.session.usage({ breakdown: 'summary' })).context
 
@@ -220,12 +223,58 @@ const gauge = async ($: EngineInterface, window: number, now: number) => {
         at: breakdown?.isAutoCompactEnabled === true ? (breakdown.autoCompactThreshold ?? null) : null,
         readAt: now,
       }
+
+      if (breakdown !== undefined) {
+        const rows: Slice[] = breakdown.categories
+          .filter(row => row.kind !== 'deferred' && row.tokens > 0)
+          .map(row => ({ name: row.name, tokens: row.tokens, kind: row.kind }))
+
+        await update($, slices, () => rows)
+      }
     } catch {
       // Unknown for now; the moods go by the window until a reading comes.
     }
   }
 
   return gauged.window === window ? gauged.at : null
+}
+
+// One color per category, by what it is; anything new gets a neutral grey.
+const SLICE_COLORS: [RegExp, string, string][] = [
+  [/messages/i, '#ffd166', 'messages'],
+  [/system prompt/i, '#b59cff', 'system'],
+  [/mcp/i, '#22c7d6', 'mcp'],
+  [/tools/i, '#5cc8ff', 'tools'],
+  [/agent/i, '#ff6fd8', 'agents'],
+  [/memory/i, '#ffa94d', 'memory'],
+  [/skill/i, '#5cff8a', 'skills'],
+  [/command/i, '#c77dff', 'commands'],
+  [/buffer|reserve/i, '#6b6f8a', 'reserve'],
+]
+
+const sliceLook = (name: string) => {
+  const found = SLICE_COLORS.find(([match]) => match.test(name))
+
+  return found === undefined ? { color: '#9aa4c7', short: name.toLowerCase().split(' ')[0]! } : { color: found[1], short: found[2] }
+}
+
+// The belly bar split by category: whole cells by largest remainder, so the
+// parts always add up to the bar.
+const stack = (rows: readonly Slice[], window: number, width: number) => {
+  const parts = rows.filter(row => row.kind !== 'free').map(row => ({ row, exact: (row.tokens / window) * width }))
+  const cells = parts.map(part => Math.floor(part.exact))
+  const room = Math.min(width, Math.round(parts.reduce((sum, part) => sum + part.exact, 0)))
+  const order = parts.map((part, i) => [part.exact - Math.floor(part.exact), i] as const).sort((a, b) => b[0] - a[0])
+
+  for (let k = 0; cells.reduce((a, b) => a + b, 0) < room && k < order.length; k++) cells[order[k]![1]]! += 1
+
+  const used = parts.flatMap((part, i) => (cells[i]! > 0 ? [{ ...sliceLook(part.row.name), kind: part.row.kind, cells: cells[i]! }] : []))
+  // The reserve sits at the far end of the bar, where auto-compact begins.
+  const reserve = used.filter(part => part.kind === 'buffer')
+  const content = used.filter(part => part.kind !== 'buffer')
+  const free = width - used.reduce((sum, part) => sum + part.cells, 0)
+
+  return { content, reserve, free: Math.max(0, free) }
 }
 
 const share = (tokens: number, window: number, compactAt: number | null) =>
@@ -625,6 +674,13 @@ export const register: Register = on => {
         </Box>
       )
     }
+    const pie = await read($, slices)
+    const layers = stack(pie, full.window || 1, width)
+    // Biggest first; free space is the empty part of the bar, not a legend entry.
+    const legend = pie
+      .filter(row => row.kind !== 'free')
+      .map(row => ({ ...sliceLook(row.name), kind: row.kind, tokens: row.tokens }))
+      .sort((a, b) => (a.kind === 'buffer' ? 1 : b.kind === 'buffer' ? -1 : b.tokens - a.tokens))
     let sprite
 
     // Raster draws on the terminal only; elsewhere it is an empty fragment.
@@ -665,7 +721,33 @@ export const register: Register = on => {
                 ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
                 : `fed ${span(at - full.fedAt)} ago`}
           </Text>
-          {row('belly', full.percent, `${kilo(full.tokens)}/${kilo(full.window)}`)}
+          {pie.length === 0 ? (
+            row('belly', full.percent, `${kilo(full.tokens)}/${kilo(full.window)}`)
+          ) : (
+            <Box>
+              <Text dimColor>{'belly'.padEnd(8)}</Text>
+              {layers.content.map(part => (
+                <Text color={part.color}>{'█'.repeat(part.cells)}</Text>
+              ))}
+              <Text dimColor>{'░'.repeat(layers.free)}</Text>
+              {layers.reserve.map(part => (
+                <Text color={part.color}>{'▒'.repeat(part.cells)}</Text>
+              ))}
+              <Text>
+                {` ${Math.round(full.percent)}%`.padStart(5)} {`${kilo(full.tokens)}/${kilo(full.window)}`}
+              </Text>
+            </Box>
+          )}
+          {pie.length > 0 && (
+            <Box flexWrap="wrap" width={columns}>
+              {legend.map(part => (
+                <Text>
+                  <Text color={part.color}>{part.kind === 'buffer' ? '▒' : '■'}</Text>
+                  <Text dimColor>{` ${part.short} ${kilo(part.tokens)}  `}</Text>
+                </Text>
+              ))}
+            </Box>
+          )}
           {limits.map(limit =>
             row(
               limitName(limit.kind),

@@ -268,3 +268,24 @@ test('eating stubs only the picked results and leaves every other message whole'
   expect(after[2]?.toolResults?.[1]).toBe(ROWS[2]?.toolResults?.[1])
   expect(stubbed(ROWS, new Set())).toEqual(ROWS)
 })
+
+test('the diet eats by kind: every tool result, or one tool at a time', async ($, on) => {
+  menu(on)
+  await openDiet($)
+
+  const ui = await mountDiet($, 'desktop')
+
+  expect((await ui.find({ key: 'kind-0' }))?.text).toBe('[ ] all tool results ~10k')
+  expect((await ui.find({ key: 'kind-1' }))?.text).toBe('[ ] Read ~10k')
+  expect((await ui.find({ key: 'kind-2' }))?.text).toBe('[ ] Bash ~100')
+  expect((await ui.find({ key: 'kind-1' }))?.props).toMatchObject({ hotkey: 'b' })
+
+  await ui.press({ key: 'kind-2' })
+  expect((await ui.find({ key: 'eat' }))?.text).toBe('Eat 1 (frees ~100)')
+
+  await ui.press({ key: 'kind-0' })
+  expect((await ui.find({ key: 'eat' }))?.text).toBe('Eat 2 (frees ~10k)')
+
+  await ui.press({ key: 'kind-0' })
+  expect((await ui.find({ key: 'eat' }))?.text).toBe('Eat')
+})

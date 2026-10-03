@@ -464,3 +464,41 @@ test('an interrupted turn gets no K.O. and no cheer', () => {
   expect(s.finish).toBeNull()
   expect(s.cheerAt).toBe(-100)
 })
+
+test('the belly bar is stacked by category, with a legend biggest first and the reserve last', async ($, on) => {
+  engine(on)
+  on('session.usage', (_, e) => ({
+    value: {
+      startedAt: 0,
+      context: {
+        window: 200_000,
+        ...(e?.breakdown === undefined
+          ? {}
+          : {
+              breakdown: {
+                isAutoCompactEnabled: true,
+                autoCompactThreshold: 167_000,
+                categories: [
+                  { name: 'System prompt', tokens: 10_000, kind: 'used', color: '', isDeferred: false },
+                  { name: 'System tools', tokens: 20_000, kind: 'used', color: '', isDeferred: false },
+                  { name: 'Messages', tokens: 70_000, kind: 'used', color: '', isDeferred: false },
+                  { name: 'MCP tools', tokens: 9_000, kind: 'deferred', color: '', isDeferred: true },
+                  { name: 'Free space', tokens: 67_000, kind: 'free', color: '', isDeferred: false },
+                  { name: 'Autocompact buffer', tokens: 33_000, kind: 'buffer', color: '', isDeferred: false },
+                ],
+              },
+            }),
+      },
+      rateLimits: [],
+    },
+  }) as never)
+  const ui = await pane($, 'desktop')
+
+  await measure($, 100_000)
+
+  const belly = await ui.find({ type: 'Box', text: /^belly / })
+
+  expect(belly?.text).toMatch(/^belly +█{10}░+▒{3} +50% 100k\/200k$/)
+  expect(belly?.children.filter(child => (child as { type?: string }).type === 'Text').length).toBe(7)
+  expect((await ui.find({ type: 'Box', text: /^■ messages/ }))?.text).toBe('■ messages 70k  ■ tools 20k  ■ system 10k  ▒ reserve 33k  ')
+})
