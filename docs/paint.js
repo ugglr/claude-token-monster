@@ -142,22 +142,10 @@ const startTurn = (s) => {
   s.activeAt = s.tick;
 };
 const finishTurn = (s, isAborted = false) => {
-  if (s.best >= 3) {
-    s.finish = { text: "K.O.", at: s.tick };
-    for (let i = 0; i < 24; i++) {
-      s.bits.push({
-        kind: "confetti",
-        x: random() * 64,
-        y: -random() * 8,
-        vx: (random() - 0.5) * 0.4,
-        vy: 0.2 + random() * 0.3,
-        life: 40,
-        max: 40,
-        color: [16734815, 16765503, 6094730, 6080767, 16740312][i % 5]
-      });
-    }
+  if (!isAborted) {
+    if (s.best >= 3) s.finish = { text: "K.O.", at: s.tick };
+    s.cheerAt = s.tick;
   }
-  if (!isAborted) s.cheerAt = s.tick;
   s.busy = false;
   s.tools.clear();
   s.combo = 0;
@@ -183,8 +171,9 @@ const shape = (s, width, height) => {
   const monster = s.look.monster;
   const eating = s.heat > 0.02;
   const quiet = t - s.activeAt;
-  const sleeping = !s.busy && !eating && quiet > DOZE;
-  const yawning = !s.busy && !eating && quiet > DOZE - YAWN && !sleeping;
+  const hungry = idle >= SAD;
+  const sleeping = !s.busy && !eating && quiet > DOZE && !hungry;
+  const yawning = !s.busy && !eating && quiet > DOZE - YAWN && !sleeping && !hungry;
   const floor = height - 4;
   const tight = 1 - s.power * 0.18;
   const r0 = Math.min(width * 0.5, height * 0.62) * 0.5;
@@ -347,6 +336,20 @@ const step = (s, width, height) => {
         life: 22,
         max: 22,
         color: i % 2 ? GOLD_LIGHT : WHITE
+      });
+    }
+  }
+  if (s.finish?.text === "K.O." && s.tick - s.finish.at === 1) {
+    for (let i = 0; i < 24; i++) {
+      s.bits.push({
+        kind: "confetti",
+        x: random() * width,
+        y: -random() * 8,
+        vx: (random() - 0.5) * 0.4,
+        vy: 0.2 + random() * 0.3,
+        life: 40,
+        max: 40,
+        color: [16734815, 16765503, 6094730, 6080767, 16740312][i % 5]
       });
     }
   }
@@ -513,7 +516,7 @@ const world = (c, { t, floor, hour, wave }) => {
     for (let r = 6; r > 2; r--) c.disc(x, y, r, 16765562, 0.08);
     c.disc(x, y, 2.6, 16773552);
   } else {
-    const p = (hour + 6) % 24 / 12 - 1;
+    const p = (hour + 6) % 24 / 12;
     const [x, y] = [c.width * (0.12 + 0.76 * clamp(p)), floor - 6 - Math.sin(Math.PI * clamp(p)) * (floor - 10)];
     c.disc(x, y, 2.6, 15921382);
     c.disc(x + 1.2, y - 0.8, 2.2, mix(top, bottom, y / floor));
@@ -616,21 +619,66 @@ const blaze = (c, { t, cx, cy, rx, ry, floor, blaze: k, flare }, front) => {
     }
   }
 };
-const shadow = (c, { t, cx, rx, floor, lift, body, power }, minions) => {
+const shadow = (c, { cx, rx, floor, lift }) => {
   for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
     const k = 1 - ((x + 0.5 - cx) / rx) ** 2;
     if (k > 0) c.put(x, floor, BLACK, 0.45 * k * Math.max(0.2, 1 - lift / 8));
   }
-  for (let i = 0; i < Math.min(4, minions); i++) {
-    const x = i % 2 === 0 ? 5 + (i >> 1) * 7 : c.width - 6 - (i >> 1) * 7;
-    const hopY = Math.abs(Math.sin(t * 0.5 + i)) * 2.5;
-    const y = floor - 3 - hopY;
-    const color = mix(mix(body, WHITE, 0.3), GOLD, power * 0.25);
-    c.blob(x, y, 3, 2.8 * (1 - (hopY < 0.3 ? 0.15 : 0)), color, (nx, ny) => nx * nx + ny * ny < 1);
-    c.put(x - 1, y - 1, WHITE);
-    c.put(x + 1, y - 1, WHITE);
-    c.put(x - 1, y, INK);
-    c.put(x + 1, y, INK);
+};
+const HELPERS = [16740312, 6080767, 16765503, 6094730];
+const helpers = (c, f, count) => {
+  const { t, monster, cx, rx, floor, mouth: mouth2, power } = f;
+  for (let i = 0; i < Math.min(4, count); i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const home = side < 0 ? 5 + (i >> 1) * 8 : c.width - 6 - (i >> 1) * 8;
+    const target = cx + side * (rx + 4);
+    const p = (t + i * 23) % 70 / 70;
+    let x = home;
+    let toss = -1;
+    if (p >= 0.5 && p < 0.65) x = ease(home, target, (p - 0.5) / 0.15);
+    else if (p >= 0.65 && p < 0.75) {
+      x = target;
+      toss = (p - 0.65) / 0.1;
+    } else if (p >= 0.75) x = ease(target, home, (p - 0.75) / 0.25);
+    const running = p >= 0.5 && p < 0.65 || p >= 0.75;
+    const beat = Math.sin(t * 0.6);
+    const hop = running ? Math.abs(Math.sin(t * 1.3 + i)) * 1.5 : Math.abs(beat) * 2.5;
+    const float = monster === "ghost" ? 2 + Math.sin(t * 0.2 + i) : 0;
+    const y = floor - 3 - hop - float;
+    const color = mix(HELPERS[i], GOLD, power * 0.3);
+    const squash = hop < 0.4 && !running ? 0.15 : 0;
+    const facing = running ? p < 0.65 ? -side : side : 0;
+    const mini = (nx, ny) => {
+      const d = Math.hypot(nx, ny);
+      if (monster === "slime") return d < 1 && ny < 0.8;
+      if (monster === "ghost") return ny < 0 ? d < 1 : Math.abs(nx) < 1 && ny < 1 + 0.25 * Math.sin(nx * 6 + t * 0.6);
+      if (monster === "cookie") return d < 1 + 0.12 * Math.sin(Math.atan2(ny, nx) * 9);
+      return d < 1;
+    };
+    c.blob(x, y, 3.2 * (1 + squash), 2.9 * (1 - squash), color, mini);
+    if (monster === "gremlin") {
+      c.put(x - 2, y - 3.5, 15392712);
+      c.put(x + 2, y - 3.5, 15392712);
+    }
+    const armUp = running || toss >= 0 ? 1 : beat > 0 ? 1 : 0;
+    if (monster !== "ghost") {
+      c.put(x - 3.5, y - armUp * 1.5, mix(color, INK, 0.3));
+      c.put(x + 3.5, y - (1 - armUp) * 1.5 - (running ? 1.5 : 0), mix(color, INK, 0.3));
+    }
+    const [ey, gaze] = [monster === "cookie" ? y - 2.5 : y - 0.8, facing * 0.6];
+    c.put(x - 1, ey, WHITE);
+    c.put(x + 1, ey, WHITE);
+    c.put(x - 1 + gaze, ey + 0.4, INK);
+    c.put(x + 1 + gaze, ey + 0.4, INK);
+    if (p >= 0.5 && p < 0.65) {
+      c.disc(x, y - 4.5, 1, TEXT);
+      c.add(x, y - 4.5, 16777215, 0.4);
+    }
+    if (toss >= 0) {
+      const [tx, ty] = [ease(x, mouth2.x, toss), ease(y - 4.5, mouth2.y, toss) - Math.sin(Math.PI * toss) * 6];
+      c.disc(tx, ty, 1, TEXT);
+      c.add(tx, ty, 16777215, 0.5);
+    }
   }
 };
 const limbs = (c, f, s) => {
@@ -727,10 +775,10 @@ const torso = (c, f) => {
     }
   }
 };
-const hair = (c, { t, cx, cy, rx, ry, power, level }) => {
+const hair = (c, { t, cx, cy, rx, ry, r0, power, level }) => {
   if (power < 0.3) return;
   const spikes = 5;
-  const length = Math.min((2 + level * 3) * power, cy - ry - 1);
+  const length = Math.min((2 + level * 3) * power, cy - ry - 1, r0 * 0.9);
   for (let i = 0; i < spikes; i++) {
     const offset = (i - (spikes - 1) / 2) / ((spikes - 1) / 2);
     const [bx, by] = [cx + offset * rx * 0.7, cy - ry * Math.sqrt(1 - offset * offset * 0.49) + 1];
@@ -955,10 +1003,11 @@ const paint = (s, width, height) => {
   glow(c, f, s.pantry.length > 0);
   aura(c, f, s.flashAt);
   blaze(c, f, false);
-  shadow(c, f, s.minions);
+  shadow(c, f);
   torso(c, f);
   limbs(c, f, s);
   blaze(c, f, true);
+  helpers(c, f, s.minions);
   hair(c, f);
   face(c, f, s);
   for (const mote of s.motes) {
@@ -973,14 +1022,39 @@ const paint = (s, width, height) => {
   hud(c, s);
   return c.px;
 };
-const encode = (px, columns, rows) => {
+const LEVELS = [0, 95, 135, 175, 215, 255];
+const around = (v) => {
+  const above = LEVELS.findIndex((level) => level >= v);
+  return above <= 0 ? [LEVELS[0]] : [LEVELS[above - 1], LEVELS[above]];
+};
+const memo = /* @__PURE__ */ new Map();
+const to256 = (color) => {
+  const hit2 = memo.get(color);
+  if (hit2 !== void 0) return hit2;
+  const [r, g, b] = [color >> 16 & 255, color >> 8 & 255, color & 255];
+  const mean = (r + g + b) / 3;
+  const level = Math.min(23, Math.max(0, Math.round((mean - 8) / 10)));
+  const candidates = [[8 + level * 10, 8 + level * 10, 8 + level * 10]];
+  for (const x2 of around(r)) for (const y2 of around(g)) for (const z2 of around(b)) candidates.push([x2, y2, z2]);
+  const cost = ([x2, y2, z2]) => {
+    const m = (x2 + y2 + z2) / 3;
+    const hue = (x2 - m - (r - mean)) ** 2 + (y2 - m - (g - mean)) ** 2 + (z2 - m - (b - mean)) ** 2;
+    return (x2 - r) ** 2 + (y2 - g) ** 2 + (z2 - b) ** 2 + hue * 1.5;
+  };
+  const [x, y, z] = candidates.reduce((best, one) => cost(one) < cost(best) ? one : best);
+  const out = x << 16 | y << 8 | z;
+  if (memo.size < 4096) memo.set(color, out);
+  return out;
+};
+const encode = (px, columns, rows, is256 = false) => {
   const words = new Uint32Array(columns * rows * 3);
   for (let row = 0; row < rows; row++) {
     for (let x = 0; x < columns; x++) {
       const i = (row * columns + x) * 3;
+      const [top, bottom] = [px[2 * row * columns + x] ?? 0, px[(2 * row + 1) * columns + x] ?? 0];
       words[i] = 9600;
-      words[i + 1] = px[2 * row * columns + x] ?? 0;
-      words[i + 2] = px[(2 * row + 1) * columns + x] ?? 0;
+      words[i + 1] = is256 ? to256(top) : top;
+      words[i + 2] = is256 ? to256(bottom) : bottom;
     }
   }
   const bytes = new Uint8Array(words.buffer);
@@ -1001,18 +1075,17 @@ export {
   STARVING,
   TEXT,
   THINKING,
-  comboShown,
   createScene,
   encode,
   finishTurn,
   hit,
   lively,
-  mix,
   paint,
   perk,
   serve,
   settle,
   startTurn,
   step,
+  to256,
   toolColor
 };
