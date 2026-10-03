@@ -6,6 +6,8 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 
 ![Token Monster eating through a session](media/demo.gif)
 
+![The cast: eating, on fire, super mode, a frenzy, asleep, petted, levelling up, hatching, crying, a K.O., watching you type, and a burp](media/cast.gif)
+
 ## Read the monster
 
 | What you see | What it means |
