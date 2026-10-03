@@ -827,8 +827,11 @@ const aura = (c: Canvas, { t, cx, cy, rx, ry, floor, power, level }: Shape, flas
       if (d >= flame) continue
 
       const out = Math.max(0, (d - 0.55) / (flame - 0.55))
+      const color = mix(0xffd000, 0xff8a00, out)
 
-      c.add(x, y, mix(0xffd000, 0xff5a00, out), power * (1 - out) * 0.8)
+      // Painted gold at the heart, so it shows against a daytime sky too; light at the fringe.
+      if (out < 0.6) c.put(x, y, mix(color, 0xfff3a0, 0.3 * (1 - out)), Math.min(1, power * 1.2) * 0.85 * (1 - out * 0.6))
+      else c.add(x, y, color, power * (1 - out) * 0.9)
     }
   }
 

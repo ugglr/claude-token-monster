@@ -14,18 +14,21 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | **Its face** | Its mood: hungry, happy, stuffed past 75%, dizzy eyes past 90% (time to `/compact`), a happy squint after a burp. These go by the point where Claude Code auto-compacts, which comes well before the window is full; the belly bar shows the full window. |
 | **Tears, then sleepy Zs** | Tamagotchi hunger: sad after 15 minutes without tokens, starving after an hour. Feed it to cheer it up. |
 | **The glow around it** | Your session and weekly limits: green with room to spare, amber past 50%, pulsing red past 80%. It sweats when you get close. |
-| **How hard it chews** | How fast tokens are flowing right now. It sits still when nothing streams, nibbles as Claude starts writing, and chomps, bounces and shakes as the rate climbs. |
+| **How hard it chews** | How fast tokens are flowing right now. It sits still when nothing streams, nibbles as Claude starts writing, and shovels food in with both hands, bouncing and shaking, as the rate climbs. Crumbs fly. |
 | **Tokens flying into its mouth** | The actual stream, piece by piece: gold for text, lilac for thinking, then by tool: green Bash, blue reads and searches, orange edits, purple web, pink agents. A big tool result is a big meal. |
-| **Looking down and drooling** | You are typing. Your prompt floats up into its mouth when you send it. |
-| **"7 HITS"** | A combo: tool calls landing back to back, fighting game style. A turn that landed a combo of three or more ends in a **K.O.**; a failed tool call flashes **COUNTER**. |
+| **Rubbing its hands, drooling** | You are typing. It perks up when you send the prompt, which floats up into its mouth. |
+| **Hand on its chin** | Claude is thinking, and nothing has streamed yet. |
+| **On fire** | A combo: tool calls landing back to back. From the second, flames engulf it, climbing higher and hotter with every hit and throwing embers. A turn that landed three or more ends in a **K.O.** with confetti; a failed tool call makes it flinch, with a **COUNTER**. |
+| **A happy hop** | A turn finished. Sparkles. |
+| **A yawn, then sleep** | Nothing has happened for three minutes. It wakes when you start typing. |
+| **The sky** | Your local time: dawn, day with drifting clouds, dusk, and night with the moon, stars, the odd shooting star and fireflies. |
 | **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 is over 9000. Its helpers bounce beside it. A belly about to burst or a limit past 80% still shows through. |
-| **Angry brows** | A tool just failed. |
 
 Under the sprite, a readout gives the exact numbers:
 
 ```
 om nom nom nom
-> Bash Run the tests  4 HIT COMBO
+> Bash Run the tests  on fire x4
 belly   ████████████░░░░░░░░  62% 124k/200k
 session ███████░░░░░░░░░░░░░  35% 2h14m
 weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
@@ -133,9 +136,9 @@ It stores only your monster and color choice, and sends nothing anywhere: there 
 - Token counts from the stream, tool results and the diet are estimates, at about four characters a token. The context, limit and cost figures are Claude Code's own.
 - A diet meal rebuilds each message that held an eaten result from its text, joining text blocks, and the next turn reads the context uncached once.
 - The band above the prompt is shared: when another mod draws there, only one of them shows.
-- Combos break after a 4 second pause. Super mode counts running subagents from the agent list, so it can take a moment to power down after a background agent finishes.
+- Combos break after a 4 second pause. The sky goes by the clock of the machine Claude Code runs on. Super mode counts running subagents from the agent list, so it can take a moment to power down after a background agent finishes.
 - The animation and combo state live in memory and start over when the mod reloads; your monster and color are kept.
-- Tested with 34 tests run by `claude plugin test`, and live in one long session, including a real diet meal.
+- Tested with 34 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
 
 ## Dependencies
 
