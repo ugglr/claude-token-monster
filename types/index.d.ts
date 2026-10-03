@@ -32,6 +32,7 @@ declare module 'claude-code' {
       view: string
       level: number
       combo: number
+      chat: { eye: string; say: string } | null
     }
   }
 }
