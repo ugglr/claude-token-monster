@@ -1257,6 +1257,13 @@ const limbs = (c, f, s) => {
       hand = { x: cx + side * rx * 0.25 + rub, y: cy + ry * 0.6 };
     } else if (f.thinking && side === 1) hand = { x: f.mouth.x + rx * 0.3, y: f.mouth.y + ry * 0.28 };
     else if (f.sleeping) hand = { x: ax + side * length * 0.2, y: ay + length * 0.7 };
+    if (crab) {
+      const reach = thick * 3.8;
+      hand = {
+        x: side > 0 ? Math.min(hand.x, c.width - 1 - reach) : Math.max(hand.x, reach),
+        y: Math.max(hand.y, reach)
+      };
+    }
     const arm = mix(body, BLACK, 0.08);
     const steps = Math.ceil(Math.hypot(hand.x - ax, hand.y - ay) * 2);
     for (let k = 0; k <= steps; k++) {
@@ -1283,7 +1290,7 @@ const claw = (c, x, y, side, gape, thick, color) => {
     const angle = toward + jaw * side * (0.3 + gape * 0.5);
     for (let k = 0; k <= 8; k++) {
       const p = k / 8;
-      const bend = angle - jaw * side * p * p * 0.5;
+      const bend = angle - jaw * side * p * p * 0.3;
       const [jx, jy] = [x + Math.cos(bend) * reach * p, y + Math.sin(bend) * reach * p];
       c.disc(jx, jy, thick * width * (1 - p * 0.6) + 0.35, mix(color, INK, 0.55));
       c.disc(jx, jy, thick * width * (1 - p * 0.6), p > 0.8 ? mix(color, WHITE, 0.3) : mix(color, WHITE, 0.08));
@@ -1308,10 +1315,7 @@ const torso = (c, f) => {
         const step2 = Math.sin(wave * 2.4 + k * 2.1 + (side > 0 ? 1 : 0)) * (f.eating ? 1.2 : 0.8);
         const [ax, ay] = [cx + side * rx * (0.82 - k * 0.12), cy + ry * (0.15 + k * 0.28)];
         const [kx, ky] = [ax + side * rx * (0.32 + k * 0.06), ay - ry * (0.3 - k * 0.12) + step2 * 0.3];
-        const [fx, fy] = [kx + side * rx * (0.16 + k * 0.05) + step2, f.floor - 1];
-        for (const [x0, y0, x1, y1] of [[ax, ay, kx, ky], [kx, ky, fx, fy]]) {
-          for (let p = 0; p <= 1; p += 0.08) c.disc(ease(x0, x1, p), ease(y0, y1, p), 0.8, mix(leg, INK, 0.65));
-        }
+        const [fx, fy] = [kx + side * rx * (0.16 + k * 0.05) + step2, cy + ry + f.feet - 1];
         for (const [x0, y0, x1, y1] of [[ax, ay, kx, ky], [kx, ky, fx, fy]]) {
           for (let p = 0; p <= 1; p += 0.08) c.put(ease(x0, x1, p), ease(y0, y1, p), leg);
         }

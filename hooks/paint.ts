@@ -1854,6 +1854,16 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
     } else if (f.thinking && side === 1) hand = { x: f.mouth.x + rx * 0.3, y: f.mouth.y + ry * 0.28 }
     else if (f.sleeping) hand = { x: ax + side * length * 0.2, y: ay + length * 0.7 }
 
+    if (crab) {
+      // However small the pane, the whole pincer stays on screen.
+      const reach = thick * 3.8
+
+      hand = {
+        x: side > 0 ? Math.min(hand.x, c.width - 1 - reach) : Math.max(hand.x, reach),
+        y: Math.max(hand.y, reach),
+      }
+    }
+
     const arm = mix(body, BLACK, 0.08)
     const steps = Math.ceil(Math.hypot(hand.x - ax, hand.y - ay) * 2)
 
@@ -1893,7 +1903,7 @@ const claw = (c: Canvas, x: number, y: number, side: number, gape: number, thick
     for (let k = 0; k <= 8; k++) {
       const p = k / 8
       // Each jaw curves a little back toward the other at its tip.
-      const bend = angle - jaw * side * p * p * 0.5
+      const bend = angle - jaw * side * p * p * 0.3
       const [jx, jy] = [x + Math.cos(bend) * reach * p, y + Math.sin(bend) * reach * p]
 
       c.disc(jx, jy, thick * width * (1 - p * 0.6) + 0.35, mix(color, INK, 0.55))
@@ -1930,11 +1940,9 @@ const torso = (c: Canvas, f: Shape) => {
         const step = Math.sin(wave * 2.4 + k * 2.1 + (side > 0 ? 1 : 0)) * (f.eating ? 1.2 : 0.8)
         const [ax, ay] = [cx + side * rx * (0.82 - k * 0.12), cy + ry * (0.15 + k * 0.28)]
         const [kx, ky] = [ax + side * rx * (0.32 + k * 0.06), ay - ry * (0.3 - k * 0.12) + step * 0.3]
-        const [fx, fy] = [kx + side * rx * (0.16 + k * 0.05) + step, f.floor - 1]
+        // Feet hang the same way below the shell, so they leave the ground when it does.
+        const [fx, fy] = [kx + side * rx * (0.16 + k * 0.05) + step, cy + ry + f.feet - 1]
 
-        for (const [x0, y0, x1, y1] of [[ax, ay, kx, ky], [kx, ky, fx, fy]] as const) {
-          for (let p = 0; p <= 1; p += 0.08) c.disc(ease(x0, x1, p), ease(y0, y1, p), 0.8, mix(leg, INK, 0.65))
-        }
         for (const [x0, y0, x1, y1] of [[ax, ay, kx, ky], [kx, ky, fx, fy]] as const) {
           for (let p = 0; p <= 1; p += 0.08) c.put(ease(x0, x1, p), ease(y0, y1, p), leg)
         }
