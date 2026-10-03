@@ -4,11 +4,13 @@ import type { EngineInterface, Register, SessionContextUsage, Timer } from 'clau
 import type { Belly, Limit, Look, Slice } from '../types'
 import { OLD_DIET, label, registerDiet } from './diet'
 import { PANE, PANE_OPEN, isDietWord, kilo, tokens } from './format'
+import { levelOf, xpFor } from './grow'
 import {
   AMBER,
   BURP,
   BURST,
   COMBO_MS,
+  EGG,
   MINUTE,
   PALETTE,
   PROMPT,
@@ -17,10 +19,13 @@ import {
   STARVING,
   TEXT,
   THINKING,
+  WARDROBE,
   createScene,
   encode,
   finishTurn,
+  hatch,
   hit,
+  levelUp,
   lively,
   paint,
   perk,
@@ -135,6 +140,11 @@ const slices = atom({ plugin: 'token-monster', key: 'slices' } as const, [])
 const view = atom({ plugin: 'token-monster', key: 'view' } as const, 'monster')
 // What it says back for a few seconds when you pet it or come back, over its mood line.
 const chat = atom({ plugin: 'token-monster', key: 'chat' } as const, null)
+// Lifetime tokens eaten, as banked in the store; when this session started (ms), set
+// once a session, so a hot reload finds it and skips the egg; and whether it is hatching.
+const xp = atom({ plugin: 'token-monster', key: 'xp' } as const, 0)
+const born = atom({ plugin: 'token-monster', key: 'born' } as const, null)
+const egg = atom({ plugin: 'token-monster', key: 'hatching' } as const, false)
 
 // What the sprite animates from. The readout draws from the atoms above, save the
 // helper count, which only ever changes together with `level`.
@@ -398,6 +408,61 @@ const stroke = async ($: EngineInterface) => {
   await reply($, eye, lines[petted % lines.length]!)
 }
 
+// The scene's tokens already in the store, and when the store was last written: at
+// most every BANK_MS, and at a turn's end once that much time has passed.
+const BANK_MS = 30_000
+let banked = 0
+let bankedAt = -Infinity
+
+const bank = async ($: EngineInterface, isDue = true) => {
+  const fresh = scene.eaten - banked
+  const at = await $.clock.now()
+
+  if (fresh <= 0 || (!isDue && at - bankedAt < BANK_MS)) return
+
+  banked = scene.eaten
+  bankedAt = at
+
+  try {
+    // Read back first: another session may have banked its own meals meanwhile.
+    const total = (Number(await $.store.get('xp')) || 0) + fresh
+    const was = scene.rank
+
+    await $.store.set('xp', total)
+    await update($, xp, () => total)
+    levelUp(scene, levelOf(total))
+
+    if (was > 0 && scene.rank > was) {
+      const gift = WARDROBE.find(one => one.level === scene.rank)
+
+      $.ui.toast(`Token Monster grew to Lv ${scene.rank}${gift === undefined ? '!' : ` and got ${gift.part}!`}`)
+    }
+  } catch {
+    // Not banked; the next try takes these tokens too.
+    banked -= fresh
+  }
+}
+
+// Its level from the store, and a new session (no birthday yet) hatches once the pane shows.
+const wake = async ($: EngineInterface) => {
+  try {
+    const total = Number(await $.store.get('xp')) || 0
+
+    await update($, xp, () => total)
+    // Where it stands, not a level-up.
+    scene.rank = levelOf(total)
+  } catch {
+    // No store: it stays the level it shows.
+  }
+
+  if ((await read($, born)) === null) {
+    const at = await $.clock.now()
+
+    await update($, born, () => at)
+    scene.eggDue = at
+  }
+}
+
 const restyle = async ($: EngineInterface, change: (current: Look) => Look) => {
   scene.look = await update($, look, change)
   await $.store.set('look', scene.look)
@@ -407,6 +472,7 @@ const restyle = async ($: EngineInterface, change: (current: Look) => Look) => {
 let loop: Timer | undefined
 let lapse: Timer | undefined
 let pulse: Timer | undefined
+let saver: Timer | undefined
 let canvas = { columns: 0, rows: 0 }
 // Whether the terminal shows only 256 colors, so the sprite picks them itself.
 let is256 = false
@@ -421,6 +487,10 @@ const frame = async ($: EngineInterface) => {
   if (canvas.columns === 0) return
 
   step(scene, canvas.columns, canvas.rows * 2)
+
+  // The session's first paint hatches the egg; the readout follows it in and out.
+  if (scene.eggDue !== null && hatch(scene, await $.clock.now())) void update($, egg, () => true)
+  if (scene.tick - scene.eggAt === EGG) void update($, egg, () => false)
 
   if (scene.tick % 20 === 0) void rally($, true)
 
@@ -466,6 +536,9 @@ export const register: Register = on => {
     await stock($, usage.rateLimits)
     pulse?.cancel()
     pulse = $.clock.every(MINUTE, () => void tick($))
+    await wake($)
+    saver?.cancel()
+    saver = $.clock.every(BANK_MS, () => void bank($))
     await $.command.register({
       name: 'token-monster',
       description: 'Open the Token Monster pane, swap its monster and color, or put it on a diet',
@@ -570,6 +643,7 @@ export const register: Register = on => {
       finishTurn(scene, e.isAborted)
       await update($, combo, () => 0)
       await act($, '')
+      await bank($, false)
     }
 
     await rally($, true)
@@ -682,15 +756,19 @@ export const register: Register = on => {
     const power = await read($, level)
     const helpers = scene.minions
     const hits = await read($, combo)
+    const eaten = await read($, xp)
+    const rank = levelOf(eaten)
     // About to burst outranks super mode: that line is the /compact warning.
-    // What it said back to a pet or a hello shows for a moment, over its mood.
-    const { eye, say } = (await read($, chat)) ?? voice(full, at, power, helpers)
+    // What it said back to a pet or a hello shows for a moment, over its mood; hatching, it cracks.
+    const { eye, say } =
+      (await read($, chat)) ?? ((await read($, egg)) ? { eye: 'o', say: '*crack* ... *crack*' } : voice(full, at, power, helpers))
     const chain = onFire(hits)
     // The sprite takes up to 64 columns; the readout stays a 48 column block under it.
     const wide = Math.max(16, Math.min(64, e.props.bodyColumns))
     const columns = Math.min(48, wide)
     const width = Math.max(6, Math.min(BAR, columns - 23))
     const remark = larder(limits)
+    const grown = Math.round(((eaten - xpFor(rank)) / (xpFor(rank + 1) - xpFor(rank))) * width)
     const tint = hex(PALETTE[color] ?? 0x3d7bff)
     const row = (name: string, percent: number, tail: string) => {
       const [used, left] = bar(percent, width)
@@ -718,6 +796,9 @@ export const register: Register = on => {
     // Raster draws on the terminal only; elsewhere it is an empty fragment.
     if (e.surface === 'terminal' && 'Raster' in elements) {
       const { Raster } = elements
+
+      // After a hot reload the scene starts over: take the level from the banked tokens.
+      if (scene.rank === 0) levelUp(scene, rank)
       const rows = Math.max(6, Math.min(22, e.props.scroll.bodyRows - 9))
 
       canvas = { columns: wide, rows }
@@ -787,6 +868,13 @@ export const register: Register = on => {
               limit.resetsAt === undefined ? '' : span(Math.max(0, Date.parse(limit.resetsAt) - at)),
             ),
           )}
+          {/* Its level and how far to the next, on a thin bar in its own color. */}
+          <Box>
+            <Text dimColor>{`Lv ${rank}`.padEnd(8)}</Text>
+            <Text color={tint}>{'━'.repeat(grown)}</Text>
+            <Text dimColor>{'─'.repeat(width - grown)}</Text>
+            <Text dimColor>{` ${kilo(xpFor(rank + 1) - eaten)} to Lv ${rank + 1}`}</Text>
+          </Box>
           {remark !== undefined && <Text dimColor>{remark}</Text>}
           {dieting > 0 && <Text color="yellow">eating ~{kilo(plate)} tokens from the context on your next /compact</Text>}
           {/* Plain buttons show their key: `m: Monster`. The keys work while the pane holds the keyboard. */}

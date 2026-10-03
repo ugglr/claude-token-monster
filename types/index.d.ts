@@ -37,6 +37,9 @@ declare module 'claude-code' {
       level: number
       combo: number
       chat: { eye: string; say: string } | null
+      xp: number
+      born: number | null
+      hatching: boolean
     }
   }
 }

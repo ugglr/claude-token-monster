@@ -61,13 +61,21 @@ export type Scene = {
   lastAntic: Antic | null
   // How far it has stepped from the middle, chasing something.
   shift: number
+  // Growing up: tokens eaten since this scene began (the hooks bank them for good),
+  // the lifetime level (0 until known), when it last went up, and the egg a new
+  // session hatches from: `eggDue` holds the session's start until the pane shows.
+  eaten: number
+  rank: number
+  rankUpAt: number
+  eggDue: number | null
+  eggAt: number
 }
 
 type Point = { x: number; y: number }
 type Serving = { tokens: number; color: number }
 type Mote = { x: number; y: number; px: number; py: number; color: number }
 type Bit = {
-  kind: 'crumb' | 'spark' | 'confetti' | 'z' | 'puff' | 'tear' | 'drool' | 'firefly' | 'ember' | 'heart'
+  kind: 'crumb' | 'spark' | 'confetti' | 'z' | 'puff' | 'tear' | 'drool' | 'firefly' | 'ember' | 'heart' | 'shell'
   x: number
   y: number
   vx: number
@@ -95,6 +103,13 @@ const YAWN = 40
 const CHEER = 26
 const HOP = 12
 const PERK = 18
+// A level-up, in frames: crouch, a spinning jump, the landing, then a pose.
+export const LEVEL_UP = 50
+// The egg wobbles and cracks this many frames, bursts, and the shell is gone by EGG.
+export const EGG_CRACK = 28
+export const EGG = 42
+// A pane first painted later than this after the session started skips the egg.
+export const HATCH_WINDOW = 20_000
 
 export const PALETTE: Record<string, number> = {
   blue: 0x3d7bff,
@@ -115,6 +130,7 @@ const BLUSH = 0xff7aa8
 const GOLD = 0xffd23f
 const GOLD_LIGHT = 0xfff3a0
 const GOLD_DARK = 0x8a5a00
+const RAINBOW = [0xff5a5f, 0xffd23f, 0x5cff8a, 0x5cc8ff, 0xc77dff, 0xffffff]
 const TEAL = 0x2fe0c8
 const BOLT = 0xcff6ff
 export const TEXT = 0xffd166
@@ -211,13 +227,21 @@ export const createScene = (look: Look): Scene => ({
   anticAt: -1,
   lastAntic: null,
   shift: 0,
+  eaten: 0,
+  rank: 0,
+  rankUpAt: -1000,
+  eggDue: null,
+  eggAt: -1000,
 })
 
 // Tokens arriving: they heat the monster up and fly into its mouth. Typing only
 // drools; it is not tokens spent. Prompt-colored servings rise from the prompt.
 export const serve = (s: Scene, tokens: number, color: number, heats = true) => {
   if (tokens <= 0) return
-  if (heats) s.arrived += tokens
+  if (heats) {
+    s.arrived += tokens
+    s.eaten += tokens
+  }
 
   s.activeAt = s.tick
   s.servings.push({ tokens: Math.min(tokens, 3000), color })
@@ -269,6 +293,32 @@ export const finishTurn = (s: Scene, isAborted = false) => {
   s.activeAt = s.tick
 }
 
+// It grew a level: the big moment. A first reading of the level is no moment.
+export const levelUp = (s: Scene, rank: number) => {
+  if (s.rank > 0 && rank > s.rank) {
+    s.rankUpAt = s.tick
+    s.activeAt = s.tick
+  }
+
+  s.rank = Math.max(s.rank, rank)
+}
+
+// The pane is painting: a session's first look at the monster starts with the egg,
+// unless the pane came too long after the start (`at` and `eggDue` in ms). Once only.
+export const hatch = (s: Scene, at: number) => {
+  const due = s.eggDue
+
+  s.eggDue = null
+  if (due === null || at - due >= HATCH_WINDOW) return false
+
+  s.eggAt = s.tick
+  s.activeAt = s.tick
+
+  return true
+}
+
+export const hatching = (s: Scene) => s.tick - s.eggAt >= 0 && s.tick - s.eggAt < EGG
+
 // What piled up while nothing was drawing is not a meal to replay.
 export const settle = (s: Scene) => {
   s.arrived = 0
@@ -299,7 +349,9 @@ export const lively = (s: Scene) =>
   s.antic !== null ||
   s.tick - s.petAt < PET ||
   s.tick - s.greetAt < GREET ||
-  Math.abs(s.shift) > 0.05
+  Math.abs(s.shift) > 0.05 ||
+  s.tick - s.rankUpAt < LEVEL_UP ||
+  hatching(s)
 
 // What a frame reads off the scene: the monster's place and size, and how it feels.
 const shape = (s: Scene, width: number, height: number) => {
@@ -324,10 +376,19 @@ const shape = (s: Scene, width: number, height: number) => {
   const rx0 = Math.min(width * 0.36, r0 * (0.78 + 0.5 * full) * (starving ? 0.85 : 1) * wobble) * tight
   const ry0 = Math.min(height * 0.3, r0 * (0.82 + 0.3 * full)) * tight * breath
   const move = motion(s, r0)
-  const rx = rx0 * (1 + s.squash * 0.7) * move.sx
-  const ry = ry0 * (1 - s.squash) * move.sy
+  // A level-up jumps high and spins twice in the air: seen edge-on, it is thin.
+  const grown = t - s.rankUpAt
+  const leveling = grown >= 0 && grown < LEVEL_UP
+  const flight = (grown - 4) / 14
+  const flying = flight > 0 && flight < 1
+  const spin = flying ? Math.cos(flight * Math.PI * 4) : 1
+  // Out of the egg it pops up from small.
+  const egg = t - s.eggAt
+  const pop = egg >= EGG_CRACK && egg < EGG_CRACK + 6 ? 0.55 + 0.45 * ((egg - EGG_CRACK) / 6) : 1
+  const rx = rx0 * (1 + s.squash * 0.7) * pop * Math.max(0.14, Math.abs(spin)) * move.sx
+  const ry = ry0 * (1 - s.squash) * pop * move.sy
   const hopP = (t - s.cheerAt) / HOP
-  const hop = hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0
+  const hop = (hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0) + (flying ? Math.sin(Math.PI * flight) * r0 * 1.5 : 0)
   const lift =
     (monster === 'ghost' ? 3 + Math.sin(s.breathe * 1.3) * 1.4 : 0) +
     (eating ? Math.abs(Math.sin(s.bob)) * (0.3 + s.heat * 1.8) : 0) +
@@ -379,9 +440,17 @@ const shape = (s: Scene, width: number, height: number) => {
     // Where it stands at rest, and the middle of its body there, for the antics' props.
     home: width / 2,
     rest: floor - feet - ry,
-    back: move.back,
+    // Turned away, by an antic or mid level-up spin: no face to draw.
+    back: move.back || spin < 0.3,
     petting: t - s.petAt < PET,
     greeting: t - s.greetAt < GREET,
+    leveling,
+    grown,
+    egg,
+    rank: s.rank,
+    width,
+    // Red and magenta monsters wear their reds in blue and teal, so they show.
+    reddish: s.look.color === 'red' || s.look.color === 'magenta',
   }
 }
 
@@ -402,6 +471,7 @@ const mood = (s: Scene, f: Shape) => {
     blush,
   })
 
+  if (f.leveling) return set('happy', 'none', 0, 0.85, 1, 1)
   if (f.bursting && f.power <= 0.5) return set('dizzy', 'sad', 0, 0.35 + 0.15 * Math.sin(f.t * 0.3), -0.3, 0.3)
   if (f.angry && f.t - s.errorAt < 10) return set('squeeze', 'sad', 0, 0.15, -0.8, 0)
   if (f.petting) {
@@ -992,6 +1062,13 @@ export const step = (s: Scene, width: number, height: number) => {
 
   // Squash and stretch: a spring pulled back to round, kicked by bites and landings.
   if (s.tick - s.cheerAt === HOP) s.squashV += 0.14
+
+  // A level-up crouches, launches stretched, and lands with a squash.
+  const grown = s.tick - s.rankUpAt
+
+  if (grown === 1) s.squashV += 0.2
+  if (grown === 4) s.squashV -= 0.3
+  if (grown === 18) s.squashV += 0.3
   s.squashV = (s.squashV + (0 - s.squash) * 0.35) * 0.7
   s.squash += s.squashV
 
@@ -1146,6 +1223,65 @@ export const step = (s: Scene, width: number, height: number) => {
     })
   }
 
+  // Growing up: stars ride the beam of a level-up and burst on the landing; the
+  // egg bursts into shell shards, the monster pops out cheering, then the shell
+  // it stood in breaks too.
+  if (grown >= 0 && grown < 32 && random() < 0.75) {
+    s.bits.push({
+      kind: 'spark',
+      x: f.cx + (random() - 0.5) * f.r0 * 1.6,
+      y: f.floor - random() * 4,
+      vx: 0,
+      vy: -0.8 - random() * 0.9,
+      life: 18 + random() * 10,
+      max: 28,
+      color: random() < 0.5 ? GOLD_LIGHT : WHITE,
+    })
+  }
+
+  for (let i = 0; grown === 18 && i < 16; i++) {
+    const angle = (i / 16) * Math.PI * 2
+
+    s.bits.push({
+      kind: 'spark',
+      x: f.cx + Math.cos(angle) * f.rx,
+      y: f.cy + Math.sin(angle) * f.ry,
+      vx: Math.cos(angle) * (0.9 + (i % 2) * 0.5),
+      vy: Math.sin(angle) * (0.7 + (i % 2) * 0.4) - 0.2,
+      life: 24,
+      max: 24,
+      color: RAINBOW[i % RAINBOW.length]!,
+    })
+  }
+
+  if (f.egg === EGG_CRACK || f.egg === EGG) {
+    const g = eggOf(f)
+    const top = f.egg === EGG_CRACK
+
+    if (top) {
+      s.flashAt = s.tick
+      s.cheerAt = s.tick
+      s.squash = -0.3
+    }
+
+    // Shards show their white inside as often as their colored outside.
+    for (let i = 0; i < (top ? 12 : 6); i++) {
+      const angle = top ? -Math.PI * (i / 11) : Math.PI * (i / 5)
+      const side = Math.cos(angle)
+
+      s.bits.push({
+        kind: 'shell',
+        x: g.x + side * g.rx * 0.9,
+        y: top ? g.y + Math.sin(angle) * g.ry * 0.7 : f.floor - 2,
+        vx: side * (0.5 + random() * 0.7),
+        vy: top ? -1 - random() * 1.1 : -0.5 - random() * 0.6,
+        life: 16 + random() * 10,
+        max: 26,
+        color: i % 2 === 0 ? 0xf6f1e7 : g.color,
+      })
+    }
+  }
+
   const night = 1 - daylight(s.hour)
 
   if (night > 0.6 && !s.busy && s.bits.filter(bit => bit.kind === 'firefly').length < 3 && random() < 0.02) {
@@ -1155,11 +1291,11 @@ export const step = (s: Scene, width: number, height: number) => {
   s.bits = s.bits.slice(-160).filter(bit => {
     bit.life -= 1
 
-    if (bit.kind === 'crumb' || bit.kind === 'confetti' || bit.kind === 'tear' || bit.kind === 'drool') {
+    if (bit.kind === 'crumb' || bit.kind === 'confetti' || bit.kind === 'tear' || bit.kind === 'drool' || bit.kind === 'shell') {
       bit.vy += bit.kind === 'confetti' ? 0.01 : 0.12
       if (bit.kind === 'confetti') bit.vx = Math.sin((bit.life + bit.color) * 0.3) * 0.3
 
-      if (bit.y + bit.vy >= f.floor && bit.kind === 'crumb') {
+      if (bit.y + bit.vy >= f.floor && (bit.kind === 'crumb' || bit.kind === 'shell')) {
         bit.vy *= -0.4
         bit.vx *= 0.6
       }
@@ -1604,7 +1740,7 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
     const posed = pose(s, f, side, ax, ay, length, rest)
     let hand = rest
 
-    if (f.cheering || (s.finish?.text === 'K.O.' && t - s.finish.at < 30)) hand = up
+    if (f.cheering || f.leveling || (s.finish?.text === 'K.O.' && t - s.finish.at < 30)) hand = up
     else if (f.power > 0.5) hand = { x: ax + side * length * 0.75, y: ay + length * 0.45 + (hash(t, side) - 0.5) }
     else if (f.eating) {
       // Hands take turns shoveling.
@@ -1805,7 +1941,7 @@ const face = (c: Canvas, f: Shape, s: Scene) => {
       : monster === 'cookie'
         ? [[cx - rx * 0.32, cy - ry * 0.8, -1], [cx + rx * 0.32, cy - ry * 0.8, 1]]
         : [[cx - rx * 0.34, cy - ry * 0.22, -1], [cx + rx * 0.34, cy - ry * 0.22, 1]]
-  const re = Math.max(2, r0 * (monster === 'slime' ? 0.42 : monster === 'cookie' ? 0.34 : 0.26))
+  const re = eyeSize(f)
   const look = monster === 'cookie' ? s.googly : s.gaze
   const lid = m.eyes === 'open' ? Math.max(s.lid, f.blink ? 1 : 0) : 0
   const iris = { cookie: INK, slime: 0x1e5a32, ghost: 0x8f9fff, gremlin: INK }[monster] ?? 0x6a3b1f
@@ -1829,11 +1965,15 @@ const face = (c: Canvas, f: Shape, s: Scene) => {
         c.put(ex + Math.cos(angle) * rr, ey + Math.sin(angle) * rr, INK)
       }
     } else if (m.eyes === 'happy' || m.eyes === 'closed') {
-      // ^ ^ for joy, a sleepy curve for rest. The cookie's eyes sit on top of its
-      // head, so they close as lidded balls; bare, the curve would vanish into the sky.
+      // ^ ^ for joy, a sleepy curve for rest. The cookie's eyes stand on its head:
+      // joy keeps their whites, and sleep closes them as lidded balls, so neither
+      // vanishes into the sky.
       if (monster === 'cookie') {
-        c.disc(ex, ey, re, mix(body, INK, 0.6))
-        c.disc(ex, ey, re - 0.7, mix(body, WHITE, 0.15))
+        if (m.eyes === 'happy') c.disc(ex, ey, re, WHITE)
+        else {
+          c.disc(ex, ey, re, mix(body, INK, 0.6))
+          c.disc(ex, ey, re - 0.7, mix(body, WHITE, 0.15))
+        }
       }
 
       for (let dx = -re; dx <= re; dx += 0.5) {
@@ -1957,6 +2097,10 @@ const bits = (c: Canvas, s: Scene) => {
       )
     } else {
       c.put(bit.x, bit.y, bit.color, bit.kind === 'crumb' ? Math.min(1, fade * 2) : 1)
+      if (bit.kind === 'shell') {
+        c.put(bit.x + 1, bit.y, mix(bit.color, BLACK, 0.25))
+        c.put(bit.x, bit.y + 1, mix(bit.color, BLACK, 0.4))
+      }
     }
   }
 }
@@ -1974,6 +2118,10 @@ const GLYPHS: Record<string, number[]> = {
   '8': [7, 5, 7, 5, 7],
   '9': [7, 5, 7, 1, 7],
   C: [7, 4, 4, 4, 7],
+  L: [4, 4, 4, 4, 7],
+  P: [7, 5, 7, 4, 4],
+  V: [5, 5, 5, 5, 2],
+  v: [0, 0, 5, 5, 2],
   E: [7, 4, 7, 4, 7],
   H: [5, 5, 7, 5, 5],
   I: [7, 2, 2, 2, 7],
@@ -2027,24 +2175,330 @@ const hud = (c: Canvas, s: Scene) => {
   }
 }
 
+// What it wears as it grows up. Each part stays once earned; the crown takes the cap's place.
+export const WARDROBE = [
+  { level: 3, part: 'a bow tie' },
+  { level: 6, part: 'a propeller cap' },
+  { level: 10, part: 'a crown' },
+  { level: 15, part: 'a cape' },
+  { level: 25, part: 'a halo' },
+] as const
+
+const eyeSize = ({ r0, monster }: Shape) => Math.max(2, r0 * (monster === 'slime' ? 0.42 : monster === 'cookie' ? 0.34 : 0.26))
+
+// Hand-drawn parts, one character a pixel and '.' clear, set bottom-centered on
+// (x, y); every clear pixel touching a drawn one is the outline.
+const sprite = (c: Canvas, rows: readonly string[], x: number, y: number, colors: Record<string, number>) => {
+  const [w, h] = [rows[0]!.length, rows.length]
+  const [x0, y0] = [Math.round(x - (w - 1) / 2), Math.round(y) - h + 1]
+  const at = (i: number, j: number) => (rows[j]?.[i] ?? '.') !== '.'
+
+  for (let j = -1; j <= h; j++) {
+    for (let i = -1; i <= w; i++) {
+      if (at(i, j)) c.put(x0 + i, y0 + j, colors[rows[j]![i]!] ?? WHITE)
+      else if (at(i - 1, j) || at(i + 1, j) || at(i, j - 1) || at(i, j + 1)) c.put(x0 + i, y0 + j, INK, 0.9)
+    }
+  }
+}
+
+const BOW_TIE = {
+  small: ['LM...MD', 'LMMKMMD', 'MD...DD'],
+  big: ['LL.....MD', 'LMM...MMD', 'LMMMKMMMD', 'MMD...DDD', 'MD.....DD'],
+}
+const CAP = {
+  small: ['..RYB..', '.WRYBB.', 'RRRYBBb', 'rrryybb'],
+  big: ['...RYB...', '..WRYBB..', '.WRRYBBb.', 'RRRRYBBBb', 'rrrryyybb'],
+}
+const CROWN = {
+  small: ['W..W..W', 'L..G..D', 'LL.R.DD', 'LGGGGGD', 'DDDDDDD'],
+  big: ['W...W...W', 'L...G...D', 'LL.GRG.DD', 'LLGGGGGDD', 'LRGGBGGRD', 'DDDDDDDDD'],
+}
+
+// Where a hat sits: on top of the head, or on the cookie, up on its eye stalks.
+const headTop = (f: Shape) => ({
+  x: f.cx,
+  y: f.monster === 'cookie' ? f.cy - f.ry * 0.8 - eyeSize(f) : f.cy - f.ry * 0.9,
+})
+
+// A cape behind the body: from the shoulders to the ground, swaying as it breathes
+// and billowing out behind while it eats, hops or flies.
+const cape = (c: Canvas, f: Shape) => {
+  const { cx, cy, rx, ry, floor, wave, t } = f
+  const color = f.reddish ? 0x2c3fd6 : 0xc8203c
+  const top = cy - ry * 0.6
+  const bottom = Math.min(floor - 1, cy + ry * 1.1)
+  const billow = Math.min(1, f.lift / 6 + f.heat * 0.6)
+
+  for (let y = Math.floor(top); y <= Math.ceil(bottom) + 1; y++) {
+    const p = clamp((y - top) / Math.max(1, bottom - top))
+    const sway = Math.sin(wave * 1.6 + p * 2.2) * p * (1 + billow) * 1.2
+    const half = rx * (0.9 + p * (0.45 + billow * 0.35))
+
+    for (let x = Math.floor(cx - half - 2); x <= Math.ceil(cx + half + 2); x++) {
+      const nx = (x + 0.5 - cx - sway) / half
+      const hem = bottom + Math.sin(x * 0.9 + t * 0.15) * 0.8
+
+      if (Math.abs(nx) >= 1 || y > hem) continue
+
+      const edge = Math.abs(nx) > 1 - 1.2 / half || y > hem - 1
+      const fold = Math.sin(nx * 7 + wave * 1.2) > 0.55
+      const tone = edge ? mix(color, INK, 0.65) : fold ? mix(color, BLACK, 0.25) : nx < -0.3 ? mix(color, WHITE, 0.12) : color
+
+      c.put(x, y, tone)
+    }
+  }
+
+  // Gold clasps at the shoulders.
+  for (const side of [-1, 1]) c.disc(cx + side * rx * 0.78, top + 2, Math.max(0.8, rx * 0.08), GOLD)
+}
+
+// The propeller on the cap spins as it eats, and flat out in a level-up.
+const propeller = (c: Canvas, x: number, y: number, f: Shape, size: number) => {
+  const spin = f.t * (0.25 + f.heat * 1.2 + (f.leveling ? 1.5 : 0))
+  const reach = size * Math.cos(spin)
+
+  c.put(x, y + 1, INK)
+  c.line(x, y, x + reach, y, 0xff5a5f)
+  c.line(x, y, x - reach, y, 0x5cc8ff)
+  c.put(x, y, GOLD)
+}
+
+const halo = (c: Canvas, x: number, y: number, rx: number, t: number) => {
+  const ry = Math.max(1, rx * 0.3)
+  const bob = Math.sin(t * 0.15) * 0.7
+  const shine = 0.75 + 0.25 * Math.sin(t * 0.3)
+
+  for (let dy = -Math.ceil(ry) - 2; dy <= Math.ceil(ry) + 2; dy++) {
+    for (let dx = -Math.ceil(rx) - 2; dx <= Math.ceil(rx) + 2; dx++) {
+      const d = Math.hypot(dx / rx, dy / ry)
+      const ring = Math.abs(d - 1) * Math.min(rx, ry * 2)
+
+      if (ring < 0.7) c.add(x + dx, y + dy + bob, 0xfff1a8, shine)
+      else if (ring < 2) c.add(x + dx, y + dy + bob, 0xffd23f, 0.35 * shine * (1 - (ring - 0.7) / 1.3))
+    }
+  }
+}
+
+// Everything it has earned, drawn before the face so the eyes and mouth stay on top.
+// `back` is the cape, behind the body; the rest go on after the body and the hair.
+const wear = (c: Canvas, f: Shape, back: boolean) => {
+  const { rank, rx, ry, cx, cy, t, monster } = f
+  const size = f.r0 >= 11.5 ? 'big' : 'small'
+
+  if (rank < 3) return
+  if (back) {
+    if (rank >= 15) cape(c, f)
+    return
+  }
+
+  if (!f.back) {
+    const bow = f.reddish ? 0x23c4b0 : 0xe23a5b
+
+    sprite(c, BOW_TIE[size], cx, cy + ry * (monster === 'slime' ? 0.66 : 0.95) + (size === 'big' ? 2 : 1), {
+      L: mix(bow, WHITE, 0.3),
+      M: bow,
+      D: mix(bow, BLACK, 0.3),
+      K: mix(bow, BLACK, 0.45),
+    })
+  }
+
+  const head = headTop(f)
+  let crest = head.y
+
+  if (rank >= 10) {
+    sprite(c, CROWN[size], head.x, head.y, { W: 0xfff8e8, L: GOLD_LIGHT, G: GOLD, D: 0xc78a00, R: 0xff3b5c, B: 0x3d9bff })
+    crest -= CROWN[size].length
+
+    // Now and then a glint runs across the band.
+    const glint = t % 70
+
+    if (glint < 6) c.add(head.x - rx * 0.4 + glint * 1.2, head.y - 1, WHITE, 0.9)
+  } else if (rank >= 6) {
+    sprite(c, CAP[size], head.x, head.y, { R: 0xf0503c, r: 0xb8302a, Y: 0xffd23f, y: 0xc89a1a, B: 0x3d7bff, b: 0x2a50b8, W: 0xffb0a0 })
+    crest -= CAP[size].length + 1
+    propeller(c, Math.round(head.x), Math.round(crest), f, size === 'big' ? 4 : 3)
+    crest -= 1
+  }
+
+  if (rank >= 25) halo(c, head.x, crest - 3, Math.max(3, rx * 0.45), t)
+}
+
+// The egg it hatches from, in its color with lighter spots, standing on the ground:
+// it rocks on its base in fits, cracks, glows through the cracks, and hops.
+const eggOf = (f: Shape) => {
+  const e = f.egg
+  const [rx, ry] = [Math.max(4, f.r0 * 0.76), Math.max(5, f.r0 * 1.0)]
+  const amp = e < 10 ? 0.2 : e < 20 ? 0.3 : 0.38
+  const tilt = e >= 20 || e % 9 < 5 ? amp * Math.sin(e * 1.4) : 0
+
+  return { x: Math.round(f.width / 2), y: f.floor - ry - (e >= 22 && e % 2 === 0 ? 1 : 0), rx, ry, tilt, color: mix(f.body, WHITE, 0.15) }
+}
+
+// The crack, in the egg's own coordinates, from the middle out.
+const CRACK: [number, number][] = [[0, -0.2], [0.25, 0.02], [0.5, -0.22], [0.78, 0.02], [1.1, -0.15]]
+
+const egg = (c: Canvas, f: Shape, half = false) => {
+  const g = eggOf(f)
+  const [cos, sin] = [Math.cos(g.tilt), Math.sin(g.tilt)]
+  // Egg coordinates to the canvas, rocking about the bottom of the egg.
+  const place = (u: number, v: number) => {
+    const [px, py] = [u * g.rx, (v - 1) * g.ry]
+
+    return [g.x + px * cos - py * sin, g.y + g.ry + px * sin + py * cos] as const
+  }
+  const crackY = (u: number) => {
+    const side = Math.abs(u)
+    const k = CRACK.findIndex(([x]) => x >= side)
+    const [a, b] = [CRACK[Math.max(0, k - 1)]!, CRACK[Math.max(0, k)]!]
+
+    return a[1] + (b[1] - a[1]) * ((side - a[0]) / Math.max(0.01, b[0] - a[0])) * (u < 0 ? 1 : 1)
+  }
+  const inside = (nx: number, ny: number) => {
+    // Back into the egg's own frame: undo the rock about its base.
+    const [px, py] = [nx * g.rx, ny * g.ry - g.ry]
+    const [u, v] = [(px * cos + py * sin) / g.rx, (-px * sin + py * cos) / g.ry + 1]
+
+    // The shell left standing is the lower part, low enough to show the mouth.
+    if (half && v < crackY(u) + 0.45) return false
+
+    return (u / (1 + 0.18 * v)) ** 2 + v * v < 1
+  }
+
+  c.blob(g.x, g.y, g.rx, g.ry, g.color, inside)
+
+  for (const [u, v, r] of [[-0.42, -0.45, 0.2], [0.38, -0.1, 0.24], [-0.2, 0.42, 0.18], [0.5, 0.55, 0.14], [0.05, -0.8, 0.12]] as const) {
+    if (half && v < 0.55) continue
+
+    const [x, y] = place(u, v)
+
+    c.disc(x, y, Math.max(0.6, r * g.rx), mix(g.color, WHITE, 0.45))
+  }
+
+  if (half) return
+
+  // The crack spreads out from the middle, then light leaks through it.
+  const e = f.egg
+  const reach = clamp((e - 8) / 16) * 1.1
+
+  for (const side of [-1, 1]) {
+    for (let u = 0; u <= reach; u += 0.04) {
+      const [x, y] = place(side * u, crackY(u))
+
+      c.put(x, y, INK)
+      if (e >= 21) c.add(x, y + 1, 0xfff1a8, 0.5 + 0.5 * Math.sin(e * 1.3))
+    }
+  }
+
+  if (e >= 21) {
+    for (let a = 0; a < 48; a++) {
+      const angle = (a / 48) * Math.PI * 2
+      const r = 1.25 + 0.1 * Math.sin(a * 3 + e)
+
+      c.add(g.x + Math.cos(angle) * g.rx * r, g.y + Math.sin(angle) * g.ry * r, 0xffe680, 0.25 * ((e - 20) / 8))
+    }
+  }
+}
+
+// The shell it stood in, a moment after the burst, in front of its feet.
+const bowl = (c: Canvas, f: Shape) => {
+  if (f.egg >= EGG_CRACK && f.egg < EGG) egg(c, { ...f, egg: 0 }, true)
+}
+
+// A level-up: a flash, a beam of light it rides up, and LV UP rising, then the new level.
+const beam = (c: Canvas, f: Shape) => {
+  const p = f.grown
+
+  if (!f.leveling || p > 34) return
+
+  const fade = p < 26 ? 1 : 1 - (p - 26) / 8
+  const half = f.r0 * 0.9
+
+  for (let y = 0; y < f.floor; y++) {
+    for (let x = Math.floor(f.cx - half - 2); x <= Math.ceil(f.cx + half + 2); x++) {
+      const d = Math.abs(x + 0.5 - f.cx) / half
+      const shimmer = 0.75 + 0.25 * Math.sin(y * 0.7 - p * 1.4 + x)
+
+      if (d < 1) c.add(x, y, mix(GOLD_LIGHT, WHITE, 1 - d), 0.55 * (1 - d * d) * fade * shimmer)
+    }
+  }
+}
+
+// The words go up behind the monster, so it and all it wears stay in front.
+const cheer = (c: Canvas, f: Shape) => {
+  const p = f.grown
+
+  if (!f.leveling || p < 2 || p > 44 || (p > 38 && p % 3 === 0)) return
+
+  const text = p < 22 ? 'LV UP' : `LV ${f.rank}`
+  const scale = c.width >= 40 ? 2 : 1
+  const width = text.length * 4 * scale - scale
+  const rise = clamp((p - 2) / 9)
+  const y = Math.round(ease(f.floor - 5 * scale, 2, 1 - (1 - rise) ** 3))
+
+  write(c, text, Math.round((c.width - width) / 2), y, scale, p % 4 < 2 ? 0xfff3a0 : 0xffd23f, 0xff8a1f)
+}
+
+const flash = (c: Canvas, { leveling, grown }: Shape) => {
+  if (!leveling || grown >= 4) return
+
+  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) c.add(x, y, WHITE, 0.6 * (1 - grown / 4))
+}
+
+// Its level, small in the top left corner.
+const badge = (c: Canvas, rank: number) => {
+  if (rank < 1) return
+
+  const text = `Lv${rank}`
+  const width = text.length * 4 + 1
+
+  for (let y = 0; y < 7; y++) {
+    for (let x = 0; x < width; x++) {
+      const corner = (x === 0 || x === width - 1) && (y === 0 || y === 6)
+
+      if (!corner) c.put(1 + x, 1 + y, INK, 0.55)
+    }
+  }
+
+  ;[...text].forEach((char, i) => {
+    ;(GLYPHS[char] ?? GLYPHS[' ']!).forEach((row, y) => {
+      for (let x = 0; x < 3; x++) if (row & (4 >> x)) c.put(2 + i * 4 + x, 2 + y, i < 2 ? 0xc9d3e8 : GOLD)
+    })
+  })
+}
+
 // One frame, `width` by `height` pixels, 0xRRGGBB each. Reads the scene, never moves it.
 export const paint = (s: Scene, width: number, height: number): Uint32Array => {
   const c = new Canvas(width, height)
   const f = shape(s, width, height)
 
   world(c, f)
+
+  // In the egg there is no monster yet: only the egg, rocking and cracking.
+  if (f.egg >= 0 && f.egg < EGG_CRACK) {
+    shadow(c, { ...f, rx: f.r0 * 0.6 })
+    egg(c, f)
+    bits(c, s)
+
+    return c.px
+  }
+
   glow(c, f, s.pantry.length > 0)
   aura(c, f, s.flashAt)
+  beam(c, f)
+  cheer(c, f)
   blaze(c, f, false)
   shadow(c, f)
+  wear(c, f, true)
   torso(c, f)
   limbs(c, f, s)
   blaze(c, f, true)
   helpers(c, f, s.minions)
   hair(c, f)
+  wear(c, f, false)
   // Mid spin, its back is to you.
   if (!f.back) face(c, f, s)
   antics(c, s, f)
+  bowl(c, f)
 
   for (const mote of s.motes) {
     c.put(mote.px, mote.py, mote.color, 0.4)
@@ -2061,6 +2515,9 @@ export const paint = (s: Scene, width: number, height: number): Uint32Array => {
   }
 
   hud(c, s)
+  flash(c, f)
+  // No level on an egg, and none in the corner while the big one shows.
+  badge(c, (f.egg >= 0 && f.egg < EGG) || f.leveling ? 0 : s.rank)
 
   return c.px
 }
