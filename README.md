@@ -33,6 +33,7 @@ belly   ████████████░░░░░░░░  62% 124k/2
 session ███████░░░░░░░░░░░░░  35% 2h14m
 weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
 [Monster] [Color] [Diet: free context]
+[Sound: off]
 ```
 
 ![Every monster and mood](media/moods.png)
@@ -44,6 +45,16 @@ Today you can only `/clear` or `/compact` the whole conversation. The diet lets 
 Eat arms the diet, puts `/compact` in your prompt, and the monster tells you how many tokens it is about to eat from the context. Press Enter, and instead of summarizing the conversation, Token Monster replaces each picked result with a short note, so the model knows something was there and can run the tool again if it needs it. **Cancel** in the pane disarms it, and an automatic compaction is never touched. If the picked results are already gone (an earlier compaction or `/clear` took them), the diet disarms and your `/compact` summarizes as usual.
 
 What changes, exactly: each message holding an eaten result is rebuilt from its text. The diet only offers results whose message holds no image or document, so nothing else in it is lost; several text blocks in such a message are joined into one. Every other message stays exactly as it was. The next turn reads the context uncached once.
+
+## Sound
+
+Token Monster can make chiptune noises: a chomp as it eats, a gulp for a big tool result, a burp after `/compact`, hits that climb in pitch through a combo, a K.O. jingle, a power-up and a power-down for super mode, a little cheer when a turn finishes, a buzz for a failed tool call, a whimper when it gets hungry, a soft snore now and then while it sleeps, and a chirp to say hello.
+
+Sound is off by default. Press `s` in the pane, or run `/token-monster sound on` (or `off`), to turn it on. Your choice is remembered across sessions. It plays quietly and keeps out of the way: chomps at most three a second and only while the pane shows, one clip of a kind at a time, and nothing while you type.
+
+It plays on macOS only, through `afplay`. A Linux or Windows terminal has no player, so it stays silent there.
+
+The sounds are original, made for this mod by [`scripts/make-sounds.py`](scripts/make-sounds.py) from square, triangle and noise waves, with the Python standard library only. Run `python3 scripts/make-sounds.py` to make them again, or add `--check` to print each one's length and peak level.
 
 ## Requirements
 
@@ -85,12 +96,13 @@ claude plugin uninstall token-monster@token-monster
 
 The pane opens by itself when the terminal is at least 144 columns wide. At any width, run `/token-monster`. In fullscreen it docks beside the transcript; otherwise it sits above the prompt.
 
-Focus the pane with `ctrl+x tab`, then press `m` to swap the monster, `c` to swap the color, and `d` for the diet. `ctrl+x x` closes the pane. Or name them:
+Focus the pane with `ctrl+x tab`, then press `m` to swap the monster, `c` to swap the color, `d` for the diet, and `s` to turn sound on or off. `ctrl+x x` closes the pane. Or name them:
 
 ```
 /token-monster slime green
 /token-monster gremlin
 /token-monster diet
+/token-monster sound on
 ```
 
 Monsters: `cookie`, `slime`, `ghost`, `gremlin`. Colors: `blue`, `cyan`, `green`, `yellow`, `magenta`, `red`, `white`. Your pick is remembered across sessions.
@@ -115,7 +127,7 @@ Mods are not sandboxed, so read the code before you install any mod. Here is eve
 - **Your prompt while you type it**, only to notice that you are typing.
 - **The conversation's tool results**, when you open the diet, to list them; and on a diet `/compact`, the conversation, to replace the results you picked.
 
-It stores only your monster and color choice, and sends nothing anywhere: there is no network call in the code.
+It stores only your monster and color choice and whether sound is on, and sends nothing anywhere: there is no network call in the code.
 
 ## How it was built
 
@@ -138,7 +150,7 @@ It stores only your monster and color choice, and sends nothing anywhere: there 
 - The band above the prompt is shared: when another mod draws there, only one of them shows.
 - Combos break after a 4 second pause. The sky goes by the clock of the machine Claude Code runs on. Super mode counts running subagents from the agent list, so it can take a moment to power down after a background agent finishes.
 - The animation and combo state live in memory and start over when the mod reloads; your monster and color are kept.
-- Tested with 34 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
+- Tested with 42 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
 
 ## Dependencies
 

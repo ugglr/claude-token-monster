@@ -31,6 +31,7 @@ import {
   toolColor,
 } from './paint'
 import type { Scene } from './paint'
+import { isSoundWord, registerSound } from './sound'
 
 const FPS = 10
 const BAR = 20
@@ -129,6 +130,8 @@ const level = atom({ plugin: 'token-monster', key: 'level' } as const, 0)
 const combo = atom({ plugin: 'token-monster', key: 'combo' } as const, 0)
 // Which view the pane shows; the diet module draws 'diet' (see hooks/diet.tsx).
 const view = atom({ plugin: 'token-monster', key: 'view' } as const, 'monster')
+// Whether the sound is on, for the s button's label; hooks/sound.tsx keeps it.
+const sound = atom({ plugin: 'token-monster', key: 'sound' } as const, false)
 
 // What the sprite animates from. The readout draws from the atoms above, save the
 // helper count, which only ever changes together with `level`.
@@ -367,7 +370,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'token-monster',
       description: 'Open the Token Monster pane, swap its monster and color, or put it on a diet',
-      argumentHint: `[${NAMES.join('|')}] [color] | diet | eat`,
+      argumentHint: `[${NAMES.join('|')}] [color] | diet | eat | sound on|off`,
     })
     await update($, view, () => 'monster')
     await $.ui.close({ id: OLD_DIET })
@@ -380,7 +383,7 @@ export const register: Register = on => {
   on('command.run', { command: 'token-monster' }, async ($, e, next) => {
     const words = e.args.toLowerCase().split(/\s+/).filter(Boolean)
 
-    if (isDietWord(e.args)) return next(e)
+    if (isDietWord(e.args) || isSoundWord(e.args)) return next(e)
 
     const unknown = words.filter(word => !NAMES.includes(word) && !COLORS.includes(word))
 
@@ -421,6 +424,7 @@ export const register: Register = on => {
   })
 
   registerDiet(on)
+  registerSound(on)
 
   on('prompt.edit', ($, e, next) => {
     scene.typedAt = scene.tick
@@ -579,6 +583,7 @@ export const register: Register = on => {
     const power = await read($, level)
     const helpers = scene.minions
     const hits = await read($, combo)
+    const isLoud = await read($, sound)
     // About to burst outranks super mode: that line is the /compact warning.
     const { eye, say } =
       power === 0 || full.fill >= BURST
@@ -686,6 +691,10 @@ export const register: Register = on => {
             {/* diet.tsx answers this press: onPress cannot call into it, as the engine
                 refuses $ passed across an import. */}
             <Button key="diet" label="Diet: free context" hotkey="d" plain onPress={() => undefined} />
+          </Box>
+          {/* sound.tsx answers this press, as the diet's does. */}
+          <Box>
+            <Button key="sound" label={`Sound: ${isLoud ? 'on' : 'off'}`} hotkey="s" plain onPress={() => undefined} />
           </Box>
           {!e.props.isFocused && <Text dimColor>ctrl+x tab or a click gives me the keys</Text>}
         </Box>
