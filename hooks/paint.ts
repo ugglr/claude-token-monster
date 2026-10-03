@@ -46,8 +46,10 @@ export const BURP = MINUTE
 // One pair of limit thresholds for the bars, the glow, the sweat and the remarks.
 export const AMBER = 50
 export const RED = 80
+// The context fill, in percent, where the monster is about to burst: time to /compact.
+export const BURST = 90
 // Tool calls closer together than this chain into a combo; the HUD shows it this many frames.
-const COMBO_MS = 4000
+export const COMBO_MS = 4000
 const COMBO_FRAMES = 40
 
 export const PALETTE: Record<string, number> = {
@@ -246,7 +248,7 @@ const shape = (s: Scene, width: number, height: number) => {
     wave: s.breathe,
     sad: idle >= SAD,
     burping: s.belly?.burpAt != null && s.at - s.belly.burpAt < BURP,
-    bursting: full >= 0.9,
+    bursting: full * 100 >= BURST,
     stuffed: full >= 0.75,
     pressure: Math.max(0, ...s.pantry.map(limit => limit.percentUsed)),
     typing,
@@ -394,7 +396,7 @@ const glow = (c: Canvas, { t, cx, cy, rx, ry, floor, pressure, power }: Shape, h
   if (!hasLimits || (power > 0.5 && pressure < RED)) return
 
   const color = pressure >= RED ? 0xff3b3b : pressure >= AMBER ? 0xffb02e : 0x2fd27a
-  const pulse = pressure >= RED ? 0.55 + 0.45 * Math.sin(t * 0.6) : 1 - power
+  const pulse = pressure >= RED ? 0.55 + 0.45 * Math.sin(t * 0.6) : Math.max(0, 1 - power * 2)
 
   for (let y = 0; y < floor; y++) {
     for (let x = 0; x < c.width; x++) {
@@ -570,7 +572,7 @@ const face = (c: Canvas, f: Shape) => {
   const fierce = angry || superEyes
 
   for (const [ex, ey, side] of eyes) {
-    if (bursting && !superEyes) {
+    if (bursting) {
       // Dizzy: a white eye, a dark ring turning, a dot.
       c.disc(ex, ey, re, WHITE)
       for (let a = 0; a < 16; a++) {

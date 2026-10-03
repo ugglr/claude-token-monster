@@ -7,6 +7,8 @@ import { PANE, PANE_OPEN, isDietWord, kilo, tokens } from './format'
 import {
   AMBER,
   BURP,
+  BURST,
+  COMBO_MS,
   MINUTE,
   PALETTE,
   PROMPT,
@@ -121,7 +123,8 @@ const armed = atom({ plugin: 'token-monster', key: 'armed' } as const, [])
 const serving = atom({ plugin: 'token-monster', key: 'serving' } as const, 0)
 // The super mode level, 0 to 3: subagents running, plus one for three tools at once.
 const level = atom({ plugin: 'token-monster', key: 'level' } as const, 0)
-// This turn's combo so far, for the readout; the sprite draws its own from the scene.
+// The running combo for the readout: set at each hit, cleared when the chain's window
+// lapses or the turn ends. The sprite draws its own from the scene.
 const combo = atom({ plugin: 'token-monster', key: 'combo' } as const, 0)
 // Which view the pane shows; the diet module draws 'diet' (see hooks/diet.tsx).
 const view = atom({ plugin: 'token-monster', key: 'view' } as const, 'monster')
@@ -149,7 +152,7 @@ const barColor = (percent: number) => (percent >= RED ? 'red' : percent >= AMBER
 const feeling = ({ percent, fedAt, burpAt }: Belly, at: number) => {
   const idle = at - fedAt
 
-  if (percent >= 90) return { eye: '@', say: 'me gonna burst! /compact' }
+  if (percent >= BURST) return { eye: '@', say: 'me gonna burst! /compact' }
   if (idle >= STARVING) return { eye: '-', say: 'me starving... feed me tokens' }
   if (idle >= SAD) return { eye: 'T', say: 'me sad. no tokens :(' }
   if (burpAt !== null && at - burpAt < BURP) return { eye: '^', say: '*burp* me feel lighter' }
@@ -227,8 +230,9 @@ const act = async ($: EngineInterface, text: string) => {
 // Agent tool calls in flight: a foreground subagent runs inside its call.
 let inflight = 0
 
-// The level last written, so an unchanged level never redraws the readout.
-let written = 0
+// The level last written, so an unchanged level never redraws the readout. -1 forces
+// the first write: the atom survives a hot reload, this variable does not.
+let written = -1
 
 // Background agents outlive their tool call, so minions come from the agent list too.
 // Never throws: a failed list or write leaves the last known level until the next try.
@@ -257,6 +261,7 @@ const restyle = async ($: EngineInterface, change: (current: Look) => Look) => {
 
 // The sprite: painted on every render, then blitted in place by the loop.
 let loop: Timer | undefined
+let lapse: Timer | undefined
 let pulse: Timer | undefined
 let canvas = { columns: 0, rows: 0 }
 let painting = false
@@ -442,6 +447,8 @@ export const register: Register = on => {
       hit(scene, ran.isError === true, await $.clock.now())
       serve(scene, tokens(ran.text), toolColor(e.tool))
       await update($, combo, () => scene.combo)
+      lapse?.cancel()
+      lapse = $.clock.after(COMBO_MS, () => void update($, combo, () => 0))
 
       return ran
     } finally {
@@ -473,7 +480,7 @@ export const register: Register = on => {
     const hits = await read($, combo)
     // About to burst outranks super mode: that line is the /compact warning.
     const { eye, say } =
-      power === 0 || full.percent >= 90
+      power === 0 || full.percent >= BURST
         ? feeling(full, at)
         : {
             eye: 'O',
@@ -568,7 +575,8 @@ export const register: Register = on => {
             onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
           />
           <Text> </Text>
-          {/* The diet module answers this press and switches the view. */}
+          {/* diet.tsx answers this press: onPress cannot call into it, as the engine
+              refuses $ passed across an import. */}
           <Button key="diet" label="Diet: free context" hotkey="d" onPress={() => undefined} />
         </Box>
       </Box>

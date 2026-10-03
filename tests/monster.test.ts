@@ -230,7 +230,7 @@ const latch = () => {
   return { open, shut }
 }
 
-test('tool calls chain into a combo in the readout; a pause breaks it and the turn end clears it', async ($, on) => {
+test('tool calls chain into a combo in the readout; it lapses after a pause and the turn end clears it', async ($, on) => {
   const clock = engine(on)
 
   tool(on)
@@ -245,6 +245,8 @@ test('tool calls chain into a combo in the readout; a pause breaks it and the tu
   expect(await ui.find(text('> thinking...  3 HIT COMBO'))).toBeDefined()
 
   await clock.advance(5000)
+  expect(await ui.find(text(/HIT COMBO/))).toBeUndefined()
+
   await call($, { tool: 'Read', file_path: 'late.ts' })
   expect(await ui.find(text('> thinking...'))).toBeDefined()
 

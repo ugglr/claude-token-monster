@@ -87,7 +87,9 @@ Mods are not sandboxed, so read the code before you install any mod. Here is eve
 
 - **The model's response stream**, as it arrives, for the main conversation and every subagent: text, thinking, and the arguments of each tool call. It measures their length to animate the monster and keeps nothing.
 - **The text of each prompt you send**, and **each tool result**, subagents' included, measured the same way.
-- **The context, limit and cost figures** Claude Code already shows in its status line, and the names of the tools running.
+- **The context, limit and cost figures** Claude Code already shows in its status line.
+- **Each tool call's name and its file path, command, URL or prompt**, shown in the readout and kept in the diet's list for the session.
+- **Your prompt while you type it**, only to notice that you are typing.
 - **The conversation's tool results**, when you open the diet, to list them; and on a diet `/compact`, the conversation, to replace the results you picked.
 
 It stores only your monster and color choice, and sends nothing anywhere: there is no network call in the code.
