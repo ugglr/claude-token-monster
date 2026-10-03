@@ -57,11 +57,25 @@ Inside Claude Code:
 /plugin install token-monster@token-monster
 ```
 
-Or clone it and load the folder for one session:
+Or from your terminal:
 
+```bash
+claude plugin marketplace add ugglr/claude-token-monster
+claude plugin install token-monster@token-monster
 ```
+
+Start a new Claude Code session and the monster moves in. Or try it for one session without installing:
+
+```bash
 git clone https://github.com/ugglr/claude-token-monster
 claude --plugin-dir ./claude-token-monster
+```
+
+To get the latest version, then remove it again:
+
+```bash
+claude plugin marketplace update token-monster
+claude plugin uninstall token-monster@token-monster
 ```
 
 ## Use
