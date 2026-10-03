@@ -40,6 +40,7 @@ declare module 'claude-code' {
       xp: number
       born: number | null
       hatching: boolean
+      sound: boolean
     }
   }
 }

@@ -17,6 +17,10 @@ const YAWN = 40;
 const CHEER = 26;
 const HOP = 12;
 const PERK = 18;
+const LEVEL_UP = 50;
+const EGG_CRACK = 28;
+const EGG = 42;
+const HATCH_WINDOW = 2e4;
 const PALETTE = {
   blue: 4029439,
   cyan: 2279382,
@@ -35,6 +39,7 @@ const BLUSH = 16743080;
 const GOLD = 16765503;
 const GOLD_LIGHT = 16774048;
 const GOLD_DARK = 9067008;
+const RAINBOW = [16734815, 16765503, 6094730, 6080767, 13073919, 16777215];
 const TEAL = 3137736;
 const BOLT = 13629183;
 const TEXT = 16765286;
@@ -110,11 +115,28 @@ const createScene = (look) => ({
   best: 0,
   comboAt: -100,
   lastHitAt: -Infinity,
-  finish: null
+  finish: null,
+  petAt: -100,
+  fuss: "purr",
+  affection: 0,
+  lovedAt: 0,
+  greetAt: -100,
+  antic: null,
+  anticAt: -1,
+  lastAntic: null,
+  shift: 0,
+  eaten: 0,
+  rank: 0,
+  rankUpAt: -1e3,
+  eggDue: null,
+  eggAt: -1e3
 });
 const serve = (s, tokens, color, heats = true) => {
   if (tokens <= 0) return;
-  if (heats) s.arrived += tokens;
+  if (heats) {
+    s.arrived += tokens;
+    s.eaten += tokens;
+  }
   s.activeAt = s.tick;
   s.servings.push({ tokens: Math.min(tokens, 3e3), color });
   s.servings = s.servings.slice(-24);
@@ -152,6 +174,22 @@ const finishTurn = (s, isAborted = false) => {
   s.best = 0;
   s.activeAt = s.tick;
 };
+const levelUp = (s, rank) => {
+  if (s.rank > 0 && rank > s.rank) {
+    s.rankUpAt = s.tick;
+    s.activeAt = s.tick;
+  }
+  s.rank = Math.max(s.rank, rank);
+};
+const hatch = (s, at) => {
+  const due = s.eggDue;
+  s.eggDue = null;
+  if (due === null || at - due >= HATCH_WINDOW) return false;
+  s.eggAt = s.tick;
+  s.activeAt = s.tick;
+  return true;
+};
+const hatching = (s) => s.tick - s.eggAt >= 0 && s.tick - s.eggAt < EGG;
 const settle = (s) => {
   s.arrived = 0;
   s.rate = 0;
@@ -159,9 +197,10 @@ const settle = (s) => {
   s.servings = [];
   s.motes = [];
   s.bits = [];
+  s.antic = null;
 };
 const comboShown = (s) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES;
-const lively = (s) => s.busy || s.heat > 0.02 || s.power > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18;
+const lively = (s) => s.busy || s.heat > 0.02 || s.power > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
 const shape = (s, width, height) => {
   const t = s.tick;
   const full = (s.belly?.percent ?? 0) / 100;
@@ -181,13 +220,21 @@ const shape = (s, width, height) => {
   const breath = 1 + Math.sin(s.breathe) * (sleeping ? 0.05 : 0.025);
   const rx0 = Math.min(width * 0.36, r0 * (0.78 + 0.5 * full) * (starving ? 0.85 : 1) * wobble) * tight;
   const ry0 = Math.min(height * 0.3, r0 * (0.82 + 0.3 * full)) * tight * breath;
-  const rx = rx0 * (1 + s.squash * 0.7);
-  const ry = ry0 * (1 - s.squash);
+  const move = motion(s, r0);
+  const grown = t - s.rankUpAt;
+  const leveling = grown >= 0 && grown < LEVEL_UP;
+  const flight = (grown - 4) / 14;
+  const flying = flight > 0 && flight < 1;
+  const spin = flying ? Math.cos(flight * Math.PI * 4) : 1;
+  const egg2 = t - s.eggAt;
+  const pop = egg2 >= EGG_CRACK && egg2 < EGG_CRACK + 6 ? 0.55 + 0.45 * ((egg2 - EGG_CRACK) / 6) : 1;
+  const rx = rx0 * (1 + s.squash * 0.7) * pop * Math.max(0.14, Math.abs(spin)) * move.sx;
+  const ry = ry0 * (1 - s.squash) * pop * move.sy;
   const hopP = (t - s.cheerAt) / HOP;
-  const hop = hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0;
-  const lift = (monster === "ghost" ? 3 + Math.sin(s.breathe * 1.3) * 1.4 : 0) + (eating ? Math.abs(Math.sin(s.bob)) * (0.3 + s.heat * 1.8) : 0) + s.power * 1.5 + hop;
+  const hop = (hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0) + (flying ? Math.sin(Math.PI * flight) * r0 * 1.5 : 0);
+  const lift = (monster === "ghost" ? 3 + Math.sin(s.breathe * 1.3) * 1.4 : 0) + (eating ? Math.abs(Math.sin(s.bob)) * (0.3 + s.heat * 1.8) : 0) + s.power * 1.5 + hop + move.lift;
   const shake = s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2) : 0;
-  const cx = width / 2 + shake;
+  const cx = width / 2 + shake + Math.round(s.shift + move.dx);
   const feet = monster === "ghost" || monster === "slime" ? 0 : r0 * 0.18;
   const cy = floor - feet - ry - Math.min(lift, Math.max(0, floor - feet - 2 * ry - 4));
   return {
@@ -225,7 +272,21 @@ const shape = (s, width, height) => {
     angry: t - s.errorAt < 20,
     blink: t - s.blinkAt < 3 && t - s.typedAt >= 15,
     body: starving ? mix(PALETTE[s.look.color] ?? 4029439, 9080729, 0.55) : PALETTE[s.look.color] ?? 4029439,
-    mouth: { x: cx, y: cy + ry * (monster === "slime" ? 0.3 : 0.34) }
+    mouth: { x: cx, y: cy + ry * (monster === "slime" ? 0.3 : 0.34) },
+    // Where it stands at rest, and the middle of its body there, for the antics' props.
+    home: width / 2,
+    rest: floor - feet - ry,
+    // Turned away, by an antic or mid level-up spin: no face to draw.
+    back: move.back || spin < 0.3,
+    petting: t - s.petAt < PET,
+    greeting: t - s.greetAt < GREET,
+    leveling,
+    grown,
+    egg: egg2,
+    rank: s.rank,
+    width,
+    // Red and magenta monsters wear their reds in blue and teal, so they show.
+    reddish: s.look.color === "red" || s.look.color === "magenta"
   };
 };
 const mood = (s, f) => {
@@ -238,12 +299,23 @@ const mood = (s, f) => {
     smile,
     blush
   });
+  if (f.leveling) return set("happy", "none", 0, 0.85, 1, 1);
   if (f.bursting && f.power <= 0.5) return set("dizzy", "sad", 0, 0.35 + 0.15 * Math.sin(f.t * 0.3), -0.3, 0.3);
   if (f.angry && f.t - s.errorAt < 10) return set("squeeze", "sad", 0, 0.15, -0.8, 0);
+  if (f.petting) {
+    if (s.fuss === "stir") return set("closed", "none", 1, 0.1, 0.9, 1);
+    if (s.fuss === "plead") return set("plead", "sad", 0, 0, -0.35, 0.6);
+    return set("happy", "none", 0, f.eating ? 0.3 + 0.6 * chomp : s.fuss === "spin" ? 0.45 : 0, 1, 1);
+  }
+  if (f.greeting) return set("happy", "none", 0, 0.45, 1, 0.5);
   if (f.burping) return set("happy", "none", 0, 1, 0.6, 0.6);
   if (f.cheering) return set("happy", "none", 0, 0.75, 1, 1);
   if (f.power > 0.5) return set("open", "fierce", 0.1, f.eating ? 0.3 + 0.6 * chomp : 0.5, 0.3, 0.2);
   if (f.blaze > 0.3) return set("open", "fierce", 0.15, f.eating ? 0.3 + 0.6 * chomp : 0.25, 0.6, 0.4);
+  if (s.antic !== null) {
+    const [eyes, brows, lid, open, smile, blush] = feel(s, f, s.antic);
+    return set(eyes, brows, lid, open, smile, blush);
+  }
   if (f.sleeping) return set("closed", "none", 1, 0.12 + 0.06 * Math.sin(f.wave), 0.1, 0.35);
   if (f.yawning) return set("closed", "none", 1, 1, 0, 0);
   if (f.eating) return set("open", "none", 0.1 + f.heat * 0.35, (0.25 + 0.75 * f.heat) * chomp, 0.6, 0.2 + f.heat * 0.7);
@@ -253,6 +325,369 @@ const mood = (s, f) => {
   if (f.sad) return set("open", "sad", 0.3, 0, -0.7, 0);
   if (f.stuffed) return set("open", "none", 0.45, 0, 0.8, 0.6);
   return set("open", "none", 0.05, 0, 0.35, 0.15);
+};
+const ANTICS = {
+  stretch: { len: 32, weight: 3 },
+  scratch: { len: 30, weight: 3 },
+  look: { len: 40, weight: 3 },
+  wave: { len: 24, weight: 2 },
+  chase: { len: 40, weight: 3 },
+  juggle: { len: 40, weight: 2 },
+  hop: { len: 18, weight: 2 },
+  peek: { len: 34, weight: 2 },
+  star: { len: 38, weight: 2 }
+};
+const PET = 22;
+const GREET = 24;
+const AWAY = 1200;
+const LULL = 150;
+const LULL_MORE = 300;
+const HEART = 16732027;
+const fondness = (s, at) => s.affection * 0.5 ** (Math.max(0, at - s.lovedAt) / (2 * MINUTE));
+const pet = (s, at) => {
+  const asleep = !s.busy && s.heat <= 0.02 && s.tick - s.activeAt > DOZE;
+  const starving = s.belly !== null && at - s.belly.fedAt >= STARVING;
+  s.affection = Math.min(6, fondness(s, at) + 1);
+  s.lovedAt = at;
+  s.petAt = s.tick;
+  s.fuss = asleep ? "stir" : starving ? "plead" : s.affection > 3.5 ? "spin" : s.affection > 1.5 ? "wiggle" : "purr";
+  s.antic = null;
+  if (!asleep) s.activeAt = s.tick;
+  return s.fuss;
+};
+const typed = (s) => {
+  const away = s.tick - s.activeAt >= AWAY && s.tick - s.typedAt >= AWAY;
+  if (away) s.greetAt = s.tick;
+  s.typedAt = s.tick;
+  return away;
+};
+const calm = (s, f) => !s.busy && !f.eating && !f.typing && !f.perking && !f.cheering && !f.sleeping && !f.yawning && !f.starving && !f.angry && !f.petting && !f.greeting && s.power < 0.05 && s.servings.length === 0 && s.motes.length === 0 && !comboShown(s);
+const choose = (s, f) => {
+  const night = daylight(s.hour) < 0.4;
+  const options = Object.keys(ANTICS).filter(
+    (kind) => kind !== s.lastAntic && (kind !== "star" || night) && (kind !== "scratch" || f.monster !== "ghost")
+  );
+  let roll = random() * options.reduce((sum, kind) => sum + ANTICS[kind].weight, 0);
+  return options.find((kind) => (roll -= ANTICS[kind].weight) < 0) ?? options[0];
+};
+const progress = (s) => s.antic === null ? 0 : (s.tick - s.antic.at) / s.antic.len;
+const swell = (p, rise, fall) => clamp(Math.min(p / rise, (1 - p) / fall));
+const motion = (s, r0) => {
+  const t = s.tick;
+  const m = { dx: 0, lift: 0, sx: 1, sy: 1, back: false };
+  const ghost = s.look.monster === "ghost";
+  if (t - s.petAt < PET) {
+    const p2 = (t - s.petAt) / PET;
+    if (s.fuss === "purr") m.dx = Math.sin(t * 1.5) * 1.2 * (1 - p2);
+    if (s.fuss === "wiggle") {
+      m.dx = Math.sin(t * 1.5) * 2 * (1 - p2);
+      m.lift = Math.abs(Math.sin(p2 * Math.PI * 2)) * r0 * 0.18;
+    }
+    if (s.fuss === "spin") {
+      const q = clamp(p2 / 0.6);
+      const turn = Math.cos(q * Math.PI * 2);
+      m.sx = Math.max(0.25, Math.abs(turn));
+      m.back = turn < 0;
+      m.lift = Math.sin(Math.PI * q) * r0 * 0.4;
+    }
+    if (s.fuss === "stir") m.dx = p2 < 0.6 ? Math.sin(t * 0.9) * 0.8 : 0;
+    if (s.fuss === "plead") m.lift = Math.abs(Math.sin(t * 0.45)) * 0.8;
+    return m;
+  }
+  if (t - s.greetAt < GREET) {
+    const p2 = (t - s.greetAt) / GREET;
+    m.lift = p2 < 0.4 ? Math.sin(Math.PI * p2 / 0.4) * r0 * 0.25 : 0;
+    if (ghost) m.dx = Math.sin(t * 0.9) * 2;
+    return m;
+  }
+  const a = s.antic;
+  if (a === null) return m;
+  const p = progress(s);
+  if (a.kind === "stretch") {
+    const k = swell(p, 0.25, 0.25);
+    m.sy = 1 + 0.16 * k;
+    m.sx = 1 - 0.08 * k;
+    if (p > 0.8) m.dx = Math.sin(t * 2.2) * 0.8;
+  }
+  if (a.kind === "look") {
+    m.dx = p < 0.1 ? 0 : p < 0.32 ? -1 : p < 0.56 ? 1 : 0;
+    m.lift = p >= 0.62 ? Math.sin(clamp((p - 0.62) / 0.3) * Math.PI) * 1.6 : 0;
+  }
+  if (a.kind === "wave" && ghost) {
+    m.dx = Math.sin(t * 0.9) * 2;
+    m.lift = Math.abs(Math.sin(t * 0.45)) * 1.5;
+  }
+  if (a.kind === "scratch") m.dx = swell(p, 0.15, 0.15);
+  if (a.kind === "chase") {
+    m.lift = p < 0.56 ? Math.abs(Math.sin(p * Math.PI * 6)) * r0 * 0.12 : p < 0.74 ? Math.sin((p - 0.56) / 0.18 * Math.PI) * r0 * 0.3 : 0;
+  }
+  if (a.kind === "hop") m.lift = Math.abs(Math.sin(p * Math.PI * 3)) * r0 * 0.3;
+  if (a.kind === "peek") {
+    const k = swell(p, 0.15, 0.2);
+    m.sy = 1 - 0.07 * k;
+    m.sx = 1 + 0.04 * k;
+    if (p >= 0.8) m.lift = Math.abs(Math.sin((p - 0.8) / 0.2 * Math.PI * 2)) * 1.2;
+  }
+  if (a.kind === "star" && hash(a.at, 4) < 0.7 && p > 0.62 && p < 0.86) m.lift = Math.sin((p - 0.62) / 0.24 * Math.PI) * r0 * 0.25;
+  if (a.kind === "juggle" && p > 0.9) m.lift = Math.sin((p - 0.9) / 0.1 * Math.PI) * 1.2;
+  return m;
+};
+const prop = (s, f, p = progress(s)) => {
+  const a = s.antic;
+  if (a === null) return null;
+  const side = a.seed < 0.5 ? -1 : 1;
+  if (a.kind === "chase") {
+    const away = clamp((p - 0.66) / 0.34);
+    const y0 = f.rest - f.ry * 0.9;
+    return {
+      x: f.home + side * f.rx * 1.3 * Math.cos(Math.PI * 2 * 1.15 * Math.min(p, 0.66)) + side * away * f.rx * 2.5,
+      y: y0 + Math.sin(Math.PI * 2 * 2.3 * p) * f.ry * 0.3 - away * away * (y0 + 6)
+    };
+  }
+  if (a.kind === "star") {
+    const { aim, caught, start } = falling(s, f);
+    const land = caught ? aim : aim - side * (f.rx + 3);
+    const q = clamp((p - 0.12) / (caught ? 0.48 : 0.6));
+    if (caught && p >= 0.6 || p >= 0.72) return null;
+    return {
+      x: ease(start, land, q),
+      y: ease(2, caught ? f.rest + f.ry * 0.34 : f.floor - 1, q ** 1.4)
+    };
+  }
+  if (a.kind === "juggle") {
+    const head = { x: f.cx, y: f.cy - f.ry - 1.5 };
+    const [left, right] = f.monster === "ghost" ? [head, head] : [-1, 1].map((side2) => ({ x: f.cx + side2 * f.rx * 0.95, y: f.cy + f.ry * 0.15 }));
+    const arc = (from, to, u, height) => ({
+      x: ease(from.x, to.x, u),
+      y: ease(from.y, to.y, u) - 4 * height * u * (1 - u)
+    });
+    if (p < 0.72) {
+      const q = p / 0.72 * 3;
+      const k = Math.floor(q);
+      return arc(k % 2 === 0 ? left : right, k % 2 === 0 ? right : left, q - k, f.monster === "ghost" ? 5 : f.ry * 1.3 + 2);
+    }
+    return p < 0.9 ? arc(right, f.mouth, (p - 0.72) / 0.18, f.ry * 1.4 + 4) : null;
+  }
+  return null;
+};
+const falling = (s, f) => {
+  const a = s.antic;
+  const side = a.seed < 0.5 ? -1 : 1;
+  const aim = f.home + (hash(a.at, 3) - 0.5) * f.rx * 1.2;
+  return { aim, caught: hash(a.at, 4) < 0.7, start: aim + side * f.home * 0.7 };
+};
+const feel = (s, f, a) => {
+  const p = progress(s);
+  if (a.kind === "stretch") return p < 0.78 ? ["closed", "none", 1, 0.55, 0.3, 0.2] : ["happy", "none", 0, 0, 0.8, 0.4];
+  if (a.kind === "scratch") return ["open", "none", 0.5, 0, 0.7, 0.3];
+  if (a.kind === "look") return p < 0.6 ? ["open", "none", 0, 0, 0.1, 0] : ["open", "sad", 0, 0, -0.05, 0];
+  if (a.kind === "wave" || a.kind === "hop") return ["happy", "none", 0, 0.35, 1, 0.5];
+  if (a.kind === "chase") {
+    if (p < 0.6) return ["open", "none", 0, 0.2, 0.6, 0.3];
+    if (p < 0.74) return ["open", "fierce", 0, 0.5, 0.4, 0.3];
+    return p < 0.88 ? ["open", "none", 0, 0.3, 0.3, 0.2] : ["happy", "none", 0, 0, 0.9, 0.4];
+  }
+  if (a.kind === "juggle") {
+    if (p < 0.78) return ["open", "none", 0, 0.1, 0.7, 0.3];
+    if (p < 0.9) return ["open", "none", 0, 0.8, 0.5, 0.3];
+    return ["happy", "none", 0, Math.abs(Math.sin(f.t * 0.8)) * 0.4, 1, 0.7];
+  }
+  if (a.kind === "peek") return p < 0.8 ? ["open", "none", 0, 0.15, 0, 0] : ["happy", "none", 0, 0, 0.8, 0.3];
+  const { caught } = falling(s, f);
+  if (p < 0.12) return ["open", "none", 0, 0, 0.4, 0];
+  if (p < 0.35) return ["open", "none", 0, 0.2, 0.5, 0.2];
+  if (p < 0.6) return ["open", "none", 0, 0.9, 0.4, 0.3];
+  if (caught) return ["happy", "none", 0, 0, 1, 1];
+  return p < 0.72 ? ["open", "none", 0, 0.5, 0.2, 0] : ["open", "sad", 0.2, 0, -0.6, 0];
+};
+const glance = (s, f) => {
+  if (f.petting) return s.fuss === "plead" ? { x: 0, y: -0.7 } : null;
+  if (f.greeting) return { x: 0, y: 0 };
+  const a = s.antic;
+  if (a === null) return null;
+  const p = progress(s);
+  const thing = prop(s, f);
+  if (thing !== null) {
+    const [dx, dy] = [thing.x - f.cx, thing.y - (f.cy - f.ry * 0.4)];
+    const d = Math.max(1, Math.hypot(dx, dy));
+    return { x: dx / d, y: dy / d };
+  }
+  if (a.kind === "look") return p < 0.1 ? { x: 0, y: 0 } : p < 0.32 ? { x: -0.95, y: 0.1 } : p < 0.56 ? { x: 0.95, y: 0.1 } : { x: 0, y: 0 };
+  if (a.kind === "scratch") return { x: 0.8, y: 0.6 };
+  if (a.kind === "peek") return p < 0.8 ? { x: Math.sin(p * Math.PI * 5) * 0.8, y: 1 } : { x: 0, y: 0.3 };
+  if (a.kind === "chase") return { x: (a.seed < 0.5 ? -1 : 1) * 0.6, y: -0.9 };
+  if (a.kind === "star") return falling(s, f).caught ? { x: 0, y: 0 } : { x: (a.seed < 0.5 ? 1 : -1) * 0.7, y: 0.9 };
+  return null;
+};
+const pose = (s, f, side, ax, ay, length, rest) => {
+  const { t } = f;
+  const up = { x: ax + side * length * 0.6, y: ay - length * 1.1 };
+  const wave = { x: ax + side * length * 0.55 + Math.sin(t * 1.1) * length * 0.45, y: ay - length * 1.05 };
+  if (f.petting) {
+    const p2 = (t - s.petAt) / PET;
+    if (s.fuss === "plead") return { x: f.mouth.x + side * 1.5, y: f.mouth.y + 2.5 };
+    if (s.fuss === "stir") return null;
+    if (s.fuss === "spin") return p2 < 0.6 ? { x: ax + side * length * 0.9, y: ay - length * 0.2 } : up;
+    return { x: f.cx + side * f.rx * 0.8, y: f.cy + f.ry * 0.2 };
+  }
+  if (f.greeting) return side === -1 ? wave : null;
+  const a = s.antic;
+  if (a === null) return null;
+  const p = progress(s);
+  if (a.kind === "stretch") {
+    const k = swell(p, 0.25, 0.25);
+    return { x: ax + side * length * (0.6 - 0.25 * k), y: ay - length * (0.2 + 1.2 * k) };
+  }
+  if (a.kind === "scratch") {
+    return side === 1 ? { x: f.cx + f.rx * 0.78, y: f.cy + f.ry * 0.2 + Math.sin(t * 1.6) * 2 } : null;
+  }
+  if (a.kind === "look") return p >= 0.6 ? { x: ax + side * length * 0.95, y: ay - length * 0.15 } : null;
+  if (a.kind === "wave") return side === -1 ? wave : null;
+  if (a.kind === "hop") return { x: ax + side * length * 0.8, y: ay - length * 0.6 };
+  if (a.kind === "peek") return { x: f.cx + side * f.rx * 0.5, y: f.cy + f.ry * 0.8 };
+  if (a.kind === "chase") {
+    const clap = prop(s, f, 0.66);
+    const k = p < 0.54 ? 0 : p < 0.64 ? (p - 0.54) / 0.1 : p < 0.78 ? 1 : 1 - (p - 0.78) / 0.12;
+    return k <= 0 ? null : { x: ease(rest.x, clap.x + side * 1.3, k), y: ease(rest.y, clap.y, k) };
+  }
+  if (a.kind === "juggle") {
+    const thing = prop(s, f);
+    const base = { x: f.cx + side * f.rx * 0.95, y: f.cy + f.ry * 0.15 };
+    const near = thing === null ? 0 : clamp(1 - Math.hypot(thing.x - base.x, thing.y - base.y) / 5);
+    return p < 0.92 ? { x: base.x, y: base.y + 1 - near * 2 } : { x: f.cx + side * f.rx * 0.35, y: f.cy + f.ry * 0.55 };
+  }
+  if (p < 0.3) return null;
+  if (p < 0.62) return up;
+  if (falling(s, f).caught) return { x: f.cx + side * f.rx * 0.35, y: f.cy + f.ry * (0.55 + (t % 6 < 3 ? 0.05 : 0)) };
+  return null;
+};
+const live = (s, f) => {
+  const a = s.antic;
+  if (!calm(s, f)) {
+    s.antic = null;
+    s.anticAt = -1;
+  } else if (a !== null && s.tick - a.at >= a.len) {
+    s.antic = null;
+    s.anticAt = s.tick + LULL + random() * LULL_MORE;
+  } else if (a === null && s.anticAt < 0) {
+    s.anticAt = s.tick + LULL + random() * LULL_MORE;
+  } else if (a === null && s.tick >= s.anticAt && s.tick - s.activeAt + 40 < DOZE - YAWN) {
+    const kind = choose(s, f);
+    s.antic = { kind, at: s.tick, len: ANTICS[kind].len, seed: random() };
+    s.lastAntic = kind;
+  }
+  const now = s.antic;
+  const p = progress(s);
+  const room = Math.max(0, f.home - f.rx - 2);
+  let target = 0;
+  if (now?.kind === "chase" && p < 0.62) target = ((prop(s, f)?.x ?? f.home) - f.home) * 0.45;
+  if (now?.kind === "star" && p > 0.1 && p < 0.85) target = falling(s, f).aim - f.home;
+  s.shift = ease(s.shift, clamp(target, -room, room), 0.15);
+  if (target === 0 && Math.abs(s.shift) < 0.05) s.shift = 0;
+  const sparkle = (x, y, n, color) => {
+    for (let i = 0; i < n; i++) {
+      const angle = i / n * Math.PI * 2;
+      s.bits.push({ kind: "spark", x, y, vx: Math.cos(angle) * 0.45, vy: Math.sin(angle) * 0.45 - 0.1, life: 16, max: 16, color });
+    }
+  };
+  const heart = (x, y, vx, vy, life = 28) => s.bits.push({ kind: "heart", x, y, vx, vy, life, max: life, color: HEART });
+  if (now !== null) {
+    const e = s.tick - now.at;
+    const at = (q) => e === Math.round(now.len * q);
+    if (now.kind === "star" && falling(s, f).caught && at(0.6)) {
+      sparkle(f.mouth.x, f.mouth.y - 1, 10, GOLD_LIGHT);
+      s.squashV += 0.1;
+    }
+    if (now.kind === "star" && !falling(s, f).caught && at(0.72)) {
+      s.bits.push({ kind: "puff", x: f.home + (falling(s, f).aim - f.home) - (now.seed < 0.5 ? -1 : 1) * (f.rx + 3), y: f.floor - 2, vx: 0, vy: -0.2, life: 18, max: 18, color: 16773552 });
+    }
+    if (now.kind === "chase" && at(0.66)) {
+      const clap = prop(s, f, 0.66);
+      sparkle(clap.x, clap.y, 4, WHITE);
+    }
+    if (now.kind === "juggle" && at(0.9)) {
+      s.squashV += 0.08;
+      for (let i = 0; i < 5; i++) {
+        s.bits.push({ kind: "crumb", x: f.mouth.x, y: f.mouth.y, vx: (random() - 0.5) * 1.2, vy: -0.4 - random() * 0.6, life: 22, max: 22, color: GOLD });
+      }
+    }
+    if (now.kind === "hop" && (at(1 / 3) || at(2 / 3))) s.squashV += 0.1;
+    if (now.kind === "scratch" && e % 7 === 3 && f.monster !== "ghost") {
+      s.bits.push({ kind: "crumb", x: f.cx + f.rx * 0.95, y: f.cy + f.ry * 0.3, vx: 0.3 + random() * 0.4, vy: -0.5, life: 16, max: 16, color: mix(f.body, WHITE, 0.45) });
+    }
+  }
+  const since = s.tick - s.petAt;
+  if (since >= 1 && since < PET) {
+    const top = f.cy - f.ry * (f.monster === "cookie" ? 1.3 : 1) - 2;
+    const above = () => [f.cx + (random() - 0.5) * f.rx * 1.2, top];
+    if ((s.fuss === "purr" || s.fuss === "wiggle") && (since === 1 || since % 7 === 0)) heart(...above(), (random() - 0.5) * 0.3, -0.3);
+    if (s.fuss === "wiggle" && since === 1) heart(...above(), (random() - 0.5) * 0.5, -0.4);
+    if (s.fuss === "stir" && since === 4) heart(f.cx - f.rx * 0.5, top, -0.1, -0.2, 22);
+    if (s.fuss === "spin" && since === Math.round(PET * 0.6)) {
+      s.squashV += 0.12;
+      for (let i = 0; i < 6; i++) {
+        const angle = i / 6 * Math.PI * 2 - Math.PI / 2;
+        heart(f.cx + Math.cos(angle) * (f.rx + 3), f.cy + Math.sin(angle) * (f.ry + 2), Math.cos(angle) * 1.1, Math.sin(angle) * 0.7);
+      }
+    }
+    if (s.fuss === "plead" && since === 8 && f.monster !== "slime") {
+      s.bits.push({ kind: "tear", x: f.cx - f.rx * 0.45, y: f.cy - f.ry * 0.1, vx: 0, vy: 0.2, life: 16, max: 16, color: 7259903 });
+    }
+  }
+};
+const antics = (c, s, f) => {
+  const a = s.antic;
+  if (a === null) return;
+  const p = progress(s);
+  const thing = prop(s, f);
+  if (a.kind === "look" && p >= 0.62 && p < 0.97) write(c, "?", f.cx + f.rx * 0.75, f.cy - f.ry - 5, 1, WHITE, 13160672);
+  if (a.kind === "star" && thing === null && falling(s, f).caught && p >= 0.6) {
+    const fade = 1 - (p - 0.6) / 0.4;
+    for (let i = 0; i < 5; i++) {
+      const angle = i / 5 * Math.PI * 2 + f.t * 0.15;
+      if (hash(i, f.t >> 1) < 0.75) c.add(f.cx + Math.cos(angle) * (f.rx + 2), f.cy + Math.sin(angle) * (f.ry + 2), GOLD_LIGHT, fade);
+    }
+  }
+  if (thing === null) return;
+  const { x, y } = thing;
+  if (a.kind === "chase" && daylight(s.hour) < 0.4) {
+    const glow2 = 0.6 + 0.4 * Math.sin(f.t * 0.5);
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const d = Math.hypot(dx, dy);
+        if (d <= 2.3) c.add(x + dx, y + dy, 14221178, (d < 1.2 ? 0.6 : 0.25) * glow2);
+      }
+    }
+    c.put(x, y, 16056264);
+  } else if (a.kind === "chase") {
+    const open = (f.t >> 1) % 2 === 0;
+    const wings = open ? [[-2, -1], [-1, -1], [-1, 0], [1, -1], [2, -1], [1, 0]] : [[-1, -1], [1, -1]];
+    for (const [dx, dy] of wings) c.put(x + dx, y + dy, Math.abs(dx) === 2 ? 16769126 : 16747069);
+    c.put(x, y - 1, INK);
+    c.put(x, y, INK);
+  } else if (a.kind === "star") {
+    if (p < 0.12) {
+      const r = 1 + Math.round(p / 0.12 * 1.5);
+      for (let k = -r; k <= r; k++) {
+        c.add(x + k, y, 16774848, 1 - Math.abs(k) / (r + 1));
+        c.add(x, y + k, 16774848, 1 - Math.abs(k) / (r + 1));
+      }
+    } else {
+      const before = prop(s, f, p - 0.06) ?? thing;
+      const [dx, dy] = [x - before.x, y - before.y];
+      for (let k = 1; k <= 5; k++) c.add(x - dx * k / 3, y - dy * k / 3, 16771488, 0.7 - k * 0.12);
+      for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) c.put(x + ox, y + oy, GOLD_LIGHT);
+      c.put(x, y, WHITE);
+    }
+  } else if (a.kind === "juggle") {
+    const w = Math.max(0.5, Math.abs(Math.cos(f.t * 0.6)) * 1.6);
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const d = (dx / w) ** 2 + (dy / 1.7) ** 2;
+        if (d <= 1) c.put(x + dx, y + dy, d > 0.55 ? GOLD_DARK : dx < 0 && dy < 0 ? GOLD_LIGHT : GOLD);
+      }
+    }
+  }
 };
 const step = (s, width, height) => {
   s.tick += 1;
@@ -269,26 +704,31 @@ const step = (s, width, height) => {
     s.gazeTo = s.tools.size > 0 ? { x: 0.8, y: 0 } : s.busy ? { x: -0.5, y: -0.8 } : { x: (random() * 2 - 1) * 0.8, y: (random() * 2 - 1) * 0.5 };
     s.gazeUntil = s.tick + 15 + random() * 60;
   }
-  const looking = s.tick - s.typedAt < 15 || s.tick - s.perkAt < PERK ? { x: 0, y: 0.9 } : s.gazeTo;
-  s.gaze = { x: ease(s.gaze.x, looking.x, 0.35), y: ease(s.gaze.y, looking.y, 0.35) };
-  s.googlyV = {
-    x: (s.googlyV.x + (s.gaze.x - s.googly.x) * 0.25) * 0.72,
-    y: (s.googlyV.y + (s.gaze.y + 0.25 - s.googly.y) * 0.25 + s.squashV * 3) * 0.72
-  };
-  s.googly = { x: clamp(s.googly.x + s.googlyV.x, -1, 1), y: clamp(s.googly.y + s.googlyV.y, -1, 1) };
   if (s.level > s.lastLevel) s.flashAt = s.tick;
   s.lastLevel = s.level;
   s.power += ((s.level > 0 ? 1 : 0) - s.power) * 0.08;
   if (s.tick - s.cheerAt === HOP) s.squashV += 0.14;
+  const grown = s.tick - s.rankUpAt;
+  if (grown === 1) s.squashV += 0.2;
+  if (grown === 4) s.squashV -= 0.3;
+  if (grown === 18) s.squashV += 0.3;
   s.squashV = (s.squashV + (0 - s.squash) * 0.35) * 0.7;
   s.squash += s.squashV;
   const f = shape(s, width, height);
+  live(s, f);
   const face2 = mood(s, f);
   const quick = face2.eyes === "open" && f.eating ? 0.6 : 0.25;
   s.lid = ease(s.lid, face2.lid, 0.25);
   s.open = ease(s.open, face2.open, quick);
   s.smile = ease(s.smile, face2.smile, 0.2);
   s.blush = ease(s.blush, face2.blush, 0.1);
+  const looking = s.tick - s.typedAt < 15 || s.tick - s.perkAt < PERK ? { x: 0, y: 0.9 } : glance(s, f) ?? s.gazeTo;
+  s.gaze = { x: ease(s.gaze.x, looking.x, 0.35), y: ease(s.gaze.y, looking.y, 0.35) };
+  s.googlyV = {
+    x: (s.googlyV.x + (s.gaze.x - s.googly.x) * 0.25) * 0.72,
+    y: (s.googlyV.y + (s.gaze.y + 0.25 - s.googly.y) * 0.25 + s.squashV * 3) * 0.72
+  };
+  s.googly = { x: clamp(s.googly.x + s.googlyV.x, -1, 1), y: clamp(s.googly.y + s.googlyV.y, -1, 1) };
   for (let budget = 1 + Math.round(s.heat * 5); budget > 0 && s.servings.length > 0; budget--) {
     const serving = s.servings[0];
     const bite = Math.max(25, serving.tokens / 40);
@@ -390,16 +830,64 @@ const step = (s, width, height) => {
       color: random() < 0.4 ? 16769354 : random() < 0.7 ? 16747039 : 16726815
     });
   }
+  if (grown >= 0 && grown < 32 && random() < 0.75) {
+    s.bits.push({
+      kind: "spark",
+      x: f.cx + (random() - 0.5) * f.r0 * 1.6,
+      y: f.floor - random() * 4,
+      vx: 0,
+      vy: -0.8 - random() * 0.9,
+      life: 18 + random() * 10,
+      max: 28,
+      color: random() < 0.5 ? GOLD_LIGHT : WHITE
+    });
+  }
+  for (let i = 0; grown === 18 && i < 16; i++) {
+    const angle = i / 16 * Math.PI * 2;
+    s.bits.push({
+      kind: "spark",
+      x: f.cx + Math.cos(angle) * f.rx,
+      y: f.cy + Math.sin(angle) * f.ry,
+      vx: Math.cos(angle) * (0.9 + i % 2 * 0.5),
+      vy: Math.sin(angle) * (0.7 + i % 2 * 0.4) - 0.2,
+      life: 24,
+      max: 24,
+      color: RAINBOW[i % RAINBOW.length]
+    });
+  }
+  if (f.egg === EGG_CRACK || f.egg === EGG) {
+    const g = eggOf(f);
+    const top = f.egg === EGG_CRACK;
+    if (top) {
+      s.flashAt = s.tick;
+      s.cheerAt = s.tick;
+      s.squash = -0.3;
+    }
+    for (let i = 0; i < (top ? 12 : 6); i++) {
+      const angle = top ? -Math.PI * (i / 11) : Math.PI * (i / 5);
+      const side = Math.cos(angle);
+      s.bits.push({
+        kind: "shell",
+        x: g.x + side * g.rx * 0.9,
+        y: top ? g.y + Math.sin(angle) * g.ry * 0.7 : f.floor - 2,
+        vx: side * (0.5 + random() * 0.7),
+        vy: top ? -1 - random() * 1.1 : -0.5 - random() * 0.6,
+        life: 16 + random() * 10,
+        max: 26,
+        color: i % 2 === 0 ? 16183783 : g.color
+      });
+    }
+  }
   const night = 1 - daylight(s.hour);
   if (night > 0.6 && !s.busy && s.bits.filter((bit) => bit.kind === "firefly").length < 3 && random() < 0.02) {
     s.bits.push({ kind: "firefly", x: random() * width, y: f.floor - 2 - random() * 8, vx: 0, vy: 0, life: 120, max: 120, color: 14221178 });
   }
   s.bits = s.bits.slice(-160).filter((bit) => {
     bit.life -= 1;
-    if (bit.kind === "crumb" || bit.kind === "confetti" || bit.kind === "tear" || bit.kind === "drool") {
+    if (bit.kind === "crumb" || bit.kind === "confetti" || bit.kind === "tear" || bit.kind === "drool" || bit.kind === "shell") {
       bit.vy += bit.kind === "confetti" ? 0.01 : 0.12;
       if (bit.kind === "confetti") bit.vx = Math.sin((bit.life + bit.color) * 0.3) * 0.3;
-      if (bit.y + bit.vy >= f.floor && bit.kind === "crumb") {
+      if (bit.y + bit.vy >= f.floor && (bit.kind === "crumb" || bit.kind === "shell")) {
         bit.vy *= -0.4;
         bit.vx *= 0.6;
       }
@@ -407,6 +895,10 @@ const step = (s, width, height) => {
     if (bit.kind === "ember") {
       bit.vy -= 0.02;
       bit.vx += (random() - 0.5) * 0.2;
+    }
+    if (bit.kind === "heart") {
+      bit.vx = bit.vx * 0.9 + Math.sin(bit.life * 0.3) * 0.04;
+      bit.vy = ease(bit.vy, -0.28, 0.08);
     }
     if (bit.kind === "firefly") {
       bit.vx = ease(bit.vx, (random() - 0.5) * 0.6, 0.1);
@@ -554,12 +1046,12 @@ const glow = (c, { t, cx, cy, rx, ry, floor, pressure, power }, hasLimits) => {
   }
 };
 const aura = (c, { t, cx, cy, rx, ry, floor, power, level }, flashAt) => {
-  const flash = t - flashAt;
-  if (flash >= 0 && flash < 10) {
-    const r = 3 + flash * 3;
+  const flash2 = t - flashAt;
+  if (flash2 >= 0 && flash2 < 10) {
+    const r = 3 + flash2 * 3;
     for (let a = 0; a < 64; a++) {
       const angle = a / 64 * Math.PI * 2;
-      c.add(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r * 0.8, 16777215, 1 - flash / 10);
+      c.add(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r * 0.8, 16777215, 1 - flash2 / 10);
     }
   }
   if (power < 0.03) return;
@@ -699,13 +1191,15 @@ const limbs = (c, f, s) => {
     const rest = { x: ax + side * length * 0.45, y: ay + length * 0.8 + Math.sin(f.wave + side) * 0.5 };
     const mouthSpot = { x: f.mouth.x + side * rx * 0.35, y: f.mouth.y + 1 };
     const up = { x: ax + side * length * 0.7, y: ay - length * 1.05 + Math.sin(t * 0.8 + side) * 0.8 };
+    const posed = pose(s, f, side, ax, ay, length, rest);
     let hand = rest;
-    if (f.cheering || s.finish?.text === "K.O." && t - s.finish.at < 30) hand = up;
+    if (f.cheering || f.leveling || s.finish?.text === "K.O." && t - s.finish.at < 30) hand = up;
     else if (f.power > 0.5) hand = { x: ax + side * length * 0.75, y: ay + length * 0.45 + (hash(t, side) - 0.5) };
     else if (f.eating) {
       const scoop = Math.max(0, Math.sin(s.chew * 0.5 + (side > 0 ? Math.PI : 0)));
       hand = { x: ease(rest.x, mouthSpot.x, scoop), y: ease(rest.y, mouthSpot.y, scoop) };
-    } else if (f.typing || f.perking) {
+    } else if (posed !== null) hand = posed;
+    else if (f.typing || f.perking) {
       const rub = Math.sin(t * 1.2) * side * 0.8;
       hand = { x: cx + side * rx * 0.25 + rub, y: cy + ry * 0.6 };
     } else if (f.thinking && side === 1) hand = { x: f.mouth.x + rx * 0.3, y: f.mouth.y + ry * 0.28 };
@@ -794,7 +1288,7 @@ const hair = (c, { t, cx, cy, rx, ry, r0, power, level }) => {
     }
   }
 };
-const eye = (c, x, y, r, look, lid, f, iris) => {
+const eye = (c, x, y, r, look, lid, f, iris, big = false) => {
   const superEyes = f.power > 0.5;
   const sclera = f.monster === "ghost" ? 1708080 : f.monster === "gremlin" && !superEyes ? 16769357 : WHITE;
   for (let dy = -Math.ceil(r); dy <= Math.ceil(r); dy++) {
@@ -804,9 +1298,14 @@ const eye = (c, x, y, r, look, lid, f, iris) => {
       c.put(x + dx, y + dy, d > r - 0.7 ? mix(sclera, INK, 0.55) : dy < -r * 0.45 ? mix(sclera, 9081008, 0.25) : sclera);
     }
   }
-  const ir = r * (f.monster === "cookie" ? 0.58 : 0.62);
-  const [ix, iy] = [x + look.x * (r - ir - 0.4), y + look.y * (r - ir - 0.4)];
-  if (f.monster === "gremlin" && !superEyes) {
+  const ir = r * (f.monster === "cookie" ? 0.58 : 0.62) * (big ? 1.2 : 1);
+  const [ix, iy] = [x + look.x * Math.max(0, r - ir - 0.4), y + look.y * Math.max(0, r - ir - 0.4)];
+  if (big) {
+    c.disc(ix, iy, ir, f.monster === "ghost" ? 9412607 : INK);
+    c.disc(ix - ir * 0.35, iy - ir * 0.35, Math.max(0.7, ir * 0.38), WHITE);
+    c.put(ix + ir * 0.4, iy + ir * 0.35, WHITE);
+    for (let dx = -ir * 0.6; dx <= ir * 0.6; dx += 0.5) c.put(ix + dx, iy + ir * 0.75, 10475775, 0.7);
+  } else if (f.monster === "gremlin" && !superEyes) {
     for (let k = -ir; k <= ir; k += 0.5) c.put(ix, iy + k, INK);
   } else if (f.monster === "cookie" && !superEyes) {
     c.disc(ix, iy, ir, INK);
@@ -837,7 +1336,7 @@ const face = (c, f, s) => {
   const { t, monster, cx, cy, rx, ry, r0, body } = f;
   const m = mood(s, f);
   const eyes = monster === "slime" ? [[cx, cy - ry * 0.28, 0]] : monster === "cookie" ? [[cx - rx * 0.32, cy - ry * 0.8, -1], [cx + rx * 0.32, cy - ry * 0.8, 1]] : [[cx - rx * 0.34, cy - ry * 0.22, -1], [cx + rx * 0.34, cy - ry * 0.22, 1]];
-  const re = Math.max(2, r0 * (monster === "slime" ? 0.42 : monster === "cookie" ? 0.34 : 0.26));
+  const re = eyeSize(f);
   const look = monster === "cookie" ? s.googly : s.gaze;
   const lid = m.eyes === "open" ? Math.max(s.lid, f.blink ? 1 : 0) : 0;
   const iris = { cookie: INK, slime: 1989170, ghost: 9412607, gremlin: INK }[monster] ?? 6961951;
@@ -856,6 +1355,13 @@ const face = (c, f, s) => {
         c.put(ex + Math.cos(angle) * rr, ey + Math.sin(angle) * rr, INK);
       }
     } else if (m.eyes === "happy" || m.eyes === "closed") {
+      if (monster === "cookie") {
+        if (m.eyes === "happy") c.disc(ex, ey, re, WHITE);
+        else {
+          c.disc(ex, ey, re, mix(body, INK, 0.6));
+          c.disc(ex, ey, re - 0.7, mix(body, WHITE, 0.15));
+        }
+      }
       for (let dx = -re; dx <= re; dx += 0.5) {
         const curve = (1 - (dx / re) ** 2) * re * 0.55;
         c.put(ex + dx, ey + (m.eyes === "happy" ? -curve + re * 0.2 : curve - re * 0.2), INK);
@@ -867,7 +1373,7 @@ const face = (c, f, s) => {
       c.line(ex - re * 0.8 * dir, ey - re * 0.6, ex + re * 0.6 * dir, ey, INK);
       c.line(ex + re * 0.6 * dir, ey, ex - re * 0.8 * dir, ey + re * 0.6, INK);
     } else {
-      eye(c, ex, ey, re, look, lid, f, iris);
+      eye(c, ex, ey, re, look, lid, f, iris, m.eyes === "plead");
     }
     if (m.brows !== "none" && side !== 0) {
       for (let dx = -re; dx <= re; dx += 0.5) {
@@ -935,8 +1441,22 @@ const bits = (c, s) => {
     } else if (bit.kind === "firefly") {
       const glow2 = 0.5 + 0.5 * Math.sin(bit.life * 0.3);
       c.add(bit.x, bit.y, bit.color, 0.9 * glow2 * Math.min(1, fade * 4));
+    } else if (bit.kind === "heart") {
+      const rows = bit.max >= 24 && fade > 0.35 ? [".X.X.", "XXXXX", ".XXX.", "..X.."] : ["X.X", "XXX", ".X."];
+      const [x0, y0] = [Math.round(bit.x) - (rows[0].length >> 1), Math.round(bit.y) - 1];
+      rows.forEach(
+        (row, dy) => [...row].forEach((cell, dx) => {
+          if (cell !== "X") return;
+          const tone = dy === 0 || dy === 1 && dx === 1 ? mix(bit.color, WHITE, 0.45) : dy === rows.length - 1 ? mix(bit.color, BLACK, 0.25) : bit.color;
+          c.put(x0 + dx, y0 + dy, tone, Math.min(1, fade * 2.5));
+        })
+      );
     } else {
       c.put(bit.x, bit.y, bit.color, bit.kind === "crumb" ? Math.min(1, fade * 2) : 1);
+      if (bit.kind === "shell") {
+        c.put(bit.x + 1, bit.y, mix(bit.color, BLACK, 0.25));
+        c.put(bit.x, bit.y + 1, mix(bit.color, BLACK, 0.4));
+      }
     }
   }
 };
@@ -952,6 +1472,10 @@ const GLYPHS = {
   "8": [7, 5, 7, 5, 7],
   "9": [7, 5, 7, 1, 7],
   C: [7, 4, 4, 4, 7],
+  L: [4, 4, 4, 4, 7],
+  P: [7, 5, 7, 4, 4],
+  V: [5, 5, 5, 5, 2],
+  v: [0, 0, 5, 5, 2],
   E: [7, 4, 7, 4, 7],
   H: [5, 5, 7, 5, 5],
   I: [7, 2, 2, 2, 7],
@@ -963,6 +1487,7 @@ const GLYPHS = {
   T: [7, 2, 2, 2, 2],
   U: [5, 5, 5, 5, 7],
   ".": [0, 0, 0, 0, 2],
+  "?": [7, 1, 3, 0, 2],
   " ": [0, 0, 0, 0, 0]
 };
 const write = (c, text, x0, y0, scale, fill, shade) => {
@@ -996,20 +1521,241 @@ const hud = (c, s) => {
     );
   }
 };
+const WARDROBE = [
+  { level: 3, part: "a bow tie" },
+  { level: 6, part: "a propeller cap" },
+  { level: 10, part: "a crown" },
+  { level: 15, part: "a cape" },
+  { level: 25, part: "a halo" }
+];
+const eyeSize = ({ r0, monster }) => Math.max(2, r0 * (monster === "slime" ? 0.42 : monster === "cookie" ? 0.34 : 0.26));
+const sprite = (c, rows, x, y, colors) => {
+  const [w, h] = [rows[0].length, rows.length];
+  const [x0, y0] = [Math.round(x - (w - 1) / 2), Math.round(y) - h + 1];
+  const at = (i, j) => (rows[j]?.[i] ?? ".") !== ".";
+  for (let j = -1; j <= h; j++) {
+    for (let i = -1; i <= w; i++) {
+      if (at(i, j)) c.put(x0 + i, y0 + j, colors[rows[j][i]] ?? WHITE);
+      else if (at(i - 1, j) || at(i + 1, j) || at(i, j - 1) || at(i, j + 1)) c.put(x0 + i, y0 + j, INK, 0.9);
+    }
+  }
+};
+const BOW_TIE = {
+  small: ["LM...MD", "LMMKMMD", "MD...DD"],
+  big: ["LL.....MD", "LMM...MMD", "LMMMKMMMD", "MMD...DDD", "MD.....DD"]
+};
+const CAP = {
+  small: ["..RYB..", ".WRYBB.", "RRRYBBb", "rrryybb"],
+  big: ["...RYB...", "..WRYBB..", ".WRRYBBb.", "RRRRYBBBb", "rrrryyybb"]
+};
+const CROWN = {
+  small: ["W..W..W", "L..G..D", "LL.R.DD", "LGGGGGD", "DDDDDDD"],
+  big: ["W...W...W", "L...G...D", "LL.GRG.DD", "LLGGGGGDD", "LRGGBGGRD", "DDDDDDDDD"]
+};
+const headTop = (f) => ({
+  x: f.cx,
+  y: f.monster === "cookie" ? f.cy - f.ry * 0.8 - eyeSize(f) : f.cy - f.ry * 0.9
+});
+const cape = (c, f) => {
+  const { cx, cy, rx, ry, floor, wave, t } = f;
+  const color = f.reddish ? 2899926 : 13115452;
+  const top = cy - ry * 0.6;
+  const bottom = Math.min(floor - 1, cy + ry * 1.1);
+  const billow = Math.min(1, f.lift / 6 + f.heat * 0.6);
+  for (let y = Math.floor(top); y <= Math.ceil(bottom) + 1; y++) {
+    const p = clamp((y - top) / Math.max(1, bottom - top));
+    const sway = Math.sin(wave * 1.6 + p * 2.2) * p * (1 + billow) * 1.2;
+    const half = rx * (0.9 + p * (0.45 + billow * 0.35));
+    for (let x = Math.floor(cx - half - 2); x <= Math.ceil(cx + half + 2); x++) {
+      const nx = (x + 0.5 - cx - sway) / half;
+      const hem = bottom + Math.sin(x * 0.9 + t * 0.15) * 0.8;
+      if (Math.abs(nx) >= 1 || y > hem) continue;
+      const edge = Math.abs(nx) > 1 - 1.2 / half || y > hem - 1;
+      const fold = Math.sin(nx * 7 + wave * 1.2) > 0.55;
+      const tone = edge ? mix(color, INK, 0.65) : fold ? mix(color, BLACK, 0.25) : nx < -0.3 ? mix(color, WHITE, 0.12) : color;
+      c.put(x, y, tone);
+    }
+  }
+  for (const side of [-1, 1]) c.disc(cx + side * rx * 0.78, top + 2, Math.max(0.8, rx * 0.08), GOLD);
+};
+const propeller = (c, x, y, f, size) => {
+  const spin = f.t * (0.25 + f.heat * 1.2 + (f.leveling ? 1.5 : 0));
+  const reach = size * Math.cos(spin);
+  c.put(x, y + 1, INK);
+  c.line(x, y, x + reach, y, 16734815);
+  c.line(x, y, x - reach, y, 6080767);
+  c.put(x, y, GOLD);
+};
+const halo = (c, x, y, rx, t) => {
+  const ry = Math.max(1, rx * 0.3);
+  const bob = Math.sin(t * 0.15) * 0.7;
+  const shine = 0.75 + 0.25 * Math.sin(t * 0.3);
+  for (let dy = -Math.ceil(ry) - 2; dy <= Math.ceil(ry) + 2; dy++) {
+    for (let dx = -Math.ceil(rx) - 2; dx <= Math.ceil(rx) + 2; dx++) {
+      const d = Math.hypot(dx / rx, dy / ry);
+      const ring = Math.abs(d - 1) * Math.min(rx, ry * 2);
+      if (ring < 0.7) c.add(x + dx, y + dy + bob, 16773544, shine);
+      else if (ring < 2) c.add(x + dx, y + dy + bob, 16765503, 0.35 * shine * (1 - (ring - 0.7) / 1.3));
+    }
+  }
+};
+const wear = (c, f, back) => {
+  const { rank, rx, ry, cx, cy, t, monster } = f;
+  const size = f.r0 >= 11.5 ? "big" : "small";
+  if (rank < 3) return;
+  if (back) {
+    if (rank >= 15) cape(c, f);
+    return;
+  }
+  if (!f.back) {
+    const bow = f.reddish ? 2344112 : 14826075;
+    sprite(c, BOW_TIE[size], cx, cy + ry * (monster === "slime" ? 0.66 : 0.95) + (size === "big" ? 2 : 1), {
+      L: mix(bow, WHITE, 0.3),
+      M: bow,
+      D: mix(bow, BLACK, 0.3),
+      K: mix(bow, BLACK, 0.45)
+    });
+  }
+  const head = headTop(f);
+  let crest = head.y;
+  if (rank >= 10) {
+    sprite(c, CROWN[size], head.x, head.y, { W: 16775400, L: GOLD_LIGHT, G: GOLD, D: 13076992, R: 16726876, B: 4037631 });
+    crest -= CROWN[size].length;
+    const glint = t % 70;
+    if (glint < 6) c.add(head.x - rx * 0.4 + glint * 1.2, head.y - 1, WHITE, 0.9);
+  } else if (rank >= 6) {
+    sprite(c, CAP[size], head.x, head.y, { R: 15749180, r: 12070954, Y: 16765503, y: 13146650, B: 4029439, b: 2773176, W: 16756896 });
+    crest -= CAP[size].length + 1;
+    propeller(c, Math.round(head.x), Math.round(crest), f, size === "big" ? 4 : 3);
+    crest -= 1;
+  }
+  if (rank >= 25) halo(c, head.x, crest - 3, Math.max(3, rx * 0.45), t);
+};
+const eggOf = (f) => {
+  const e = f.egg;
+  const [rx, ry] = [Math.max(4, f.r0 * 0.76), Math.max(5, f.r0 * 1)];
+  const amp = e < 10 ? 0.2 : e < 20 ? 0.3 : 0.38;
+  const tilt = e >= 20 || e % 9 < 5 ? amp * Math.sin(e * 1.4) : 0;
+  return { x: Math.round(f.width / 2), y: f.floor - ry - (e >= 22 && e % 2 === 0 ? 1 : 0), rx, ry, tilt, color: mix(f.body, WHITE, 0.15) };
+};
+const CRACK = [[0, -0.2], [0.25, 0.02], [0.5, -0.22], [0.78, 0.02], [1.1, -0.15]];
+const egg = (c, f, half = false) => {
+  const g = eggOf(f);
+  const [cos, sin] = [Math.cos(g.tilt), Math.sin(g.tilt)];
+  const place = (u, v) => {
+    const [px, py] = [u * g.rx, (v - 1) * g.ry];
+    return [g.x + px * cos - py * sin, g.y + g.ry + px * sin + py * cos];
+  };
+  const crackY = (u) => {
+    const side = Math.abs(u);
+    const k = CRACK.findIndex(([x]) => x >= side);
+    const [a, b] = [CRACK[Math.max(0, k - 1)], CRACK[Math.max(0, k)]];
+    return a[1] + (b[1] - a[1]) * ((side - a[0]) / Math.max(0.01, b[0] - a[0])) * (u < 0 ? 1 : 1);
+  };
+  const inside = (nx, ny) => {
+    const [px, py] = [nx * g.rx, ny * g.ry - g.ry];
+    const [u, v] = [(px * cos + py * sin) / g.rx, (-px * sin + py * cos) / g.ry + 1];
+    if (half && v < crackY(u) + 0.45) return false;
+    return (u / (1 + 0.18 * v)) ** 2 + v * v < 1;
+  };
+  c.blob(g.x, g.y, g.rx, g.ry, g.color, inside);
+  for (const [u, v, r] of [[-0.42, -0.45, 0.2], [0.38, -0.1, 0.24], [-0.2, 0.42, 0.18], [0.5, 0.55, 0.14], [0.05, -0.8, 0.12]]) {
+    if (half && v < 0.55) continue;
+    const [x, y] = place(u, v);
+    c.disc(x, y, Math.max(0.6, r * g.rx), mix(g.color, WHITE, 0.45));
+  }
+  if (half) return;
+  const e = f.egg;
+  const reach = clamp((e - 8) / 16) * 1.1;
+  for (const side of [-1, 1]) {
+    for (let u = 0; u <= reach; u += 0.04) {
+      const [x, y] = place(side * u, crackY(u));
+      c.put(x, y, INK);
+      if (e >= 21) c.add(x, y + 1, 16773544, 0.5 + 0.5 * Math.sin(e * 1.3));
+    }
+  }
+  if (e >= 21) {
+    for (let a = 0; a < 48; a++) {
+      const angle = a / 48 * Math.PI * 2;
+      const r = 1.25 + 0.1 * Math.sin(a * 3 + e);
+      c.add(g.x + Math.cos(angle) * g.rx * r, g.y + Math.sin(angle) * g.ry * r, 16770688, 0.25 * ((e - 20) / 8));
+    }
+  }
+};
+const bowl = (c, f) => {
+  if (f.egg >= EGG_CRACK && f.egg < EGG) egg(c, { ...f, egg: 0 }, true);
+};
+const beam = (c, f) => {
+  const p = f.grown;
+  if (!f.leveling || p > 34) return;
+  const fade = p < 26 ? 1 : 1 - (p - 26) / 8;
+  const half = f.r0 * 0.9;
+  for (let y = 0; y < f.floor; y++) {
+    for (let x = Math.floor(f.cx - half - 2); x <= Math.ceil(f.cx + half + 2); x++) {
+      const d = Math.abs(x + 0.5 - f.cx) / half;
+      const shimmer = 0.75 + 0.25 * Math.sin(y * 0.7 - p * 1.4 + x);
+      if (d < 1) c.add(x, y, mix(GOLD_LIGHT, WHITE, 1 - d), 0.55 * (1 - d * d) * fade * shimmer);
+    }
+  }
+};
+const cheer = (c, f) => {
+  const p = f.grown;
+  if (!f.leveling || p < 2 || p > 44 || p > 38 && p % 3 === 0) return;
+  const text = p < 22 ? "LV UP" : `LV ${f.rank}`;
+  const scale = c.width >= 40 ? 2 : 1;
+  const width = text.length * 4 * scale - scale;
+  const rise = clamp((p - 2) / 9);
+  const y = Math.round(ease(f.floor - 5 * scale, 2, 1 - (1 - rise) ** 3));
+  write(c, text, Math.round((c.width - width) / 2), y, scale, p % 4 < 2 ? 16774048 : 16765503, 16747039);
+};
+const flash = (c, { leveling, grown }) => {
+  if (!leveling || grown >= 4) return;
+  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) c.add(x, y, WHITE, 0.6 * (1 - grown / 4));
+};
+const badge = (c, rank) => {
+  if (rank < 1) return;
+  const text = `Lv${rank}`;
+  const width = text.length * 4 + 1;
+  for (let y = 0; y < 7; y++) {
+    for (let x = 0; x < width; x++) {
+      const corner = (x === 0 || x === width - 1) && (y === 0 || y === 6);
+      if (!corner) c.put(1 + x, 1 + y, INK, 0.55);
+    }
+  }
+  ;
+  [...text].forEach((char, i) => {
+    ;
+    (GLYPHS[char] ?? GLYPHS[" "]).forEach((row, y) => {
+      for (let x = 0; x < 3; x++) if (row & 4 >> x) c.put(2 + i * 4 + x, 2 + y, i < 2 ? 13226984 : GOLD);
+    });
+  });
+};
 const paint = (s, width, height) => {
   const c = new Canvas(width, height);
   const f = shape(s, width, height);
   world(c, f);
+  if (f.egg >= 0 && f.egg < EGG_CRACK) {
+    shadow(c, { ...f, rx: f.r0 * 0.6 });
+    egg(c, f);
+    bits(c, s);
+    return c.px;
+  }
   glow(c, f, s.pantry.length > 0);
   aura(c, f, s.flashAt);
+  beam(c, f);
+  cheer(c, f);
   blaze(c, f, false);
   shadow(c, f);
+  wear(c, f, true);
   torso(c, f);
   limbs(c, f, s);
   blaze(c, f, true);
   helpers(c, f, s.minions);
   hair(c, f);
-  face(c, f, s);
+  wear(c, f, false);
+  if (!f.back) face(c, f, s);
+  antics(c, s, f);
+  bowl(c, f);
   for (const mote of s.motes) {
     c.put(mote.px, mote.py, mote.color, 0.4);
     c.put(mote.x, mote.y, mote.color);
@@ -1020,6 +1766,8 @@ const paint = (s, width, height) => {
     c.disc(f.cx + f.rx * 0.78, f.cy - f.ry * 0.55 + p * f.ry * 0.5, 0.9, 12577279);
   }
   hud(c, s);
+  flash(c, f);
+  badge(c, f.egg >= 0 && f.egg < EGG || f.leveling ? 0 : s.rank);
   return c.px;
 };
 const LEVELS = [0, 95, 135, 175, 215, 255];
@@ -1067,6 +1815,10 @@ export {
   BURP,
   BURST,
   COMBO_MS,
+  EGG,
+  EGG_CRACK,
+  HATCH_WINDOW,
+  LEVEL_UP,
   MINUTE,
   PALETTE,
   PROMPT,
@@ -1075,17 +1827,24 @@ export {
   STARVING,
   TEXT,
   THINKING,
+  WARDROBE,
   createScene,
   encode,
   finishTurn,
+  fondness,
+  hatch,
+  hatching,
   hit,
+  levelUp,
   lively,
   paint,
   perk,
+  pet,
   serve,
   settle,
   startTurn,
   step,
   to256,
-  toolColor
+  toolColor,
+  typed
 };
