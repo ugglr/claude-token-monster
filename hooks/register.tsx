@@ -23,6 +23,7 @@ import {
   hit,
   lively,
   paint,
+  perk,
   serve,
   settle,
   startTurn,
@@ -173,6 +174,17 @@ const larder = (limits: readonly Limit[]) => {
   return 'pantry full. feast time!'
 }
 
+// The time, kept for the readout, and the local hour, which sets the sky.
+const clocked = async ($: EngineInterface) => {
+  const at = await $.clock.now()
+  const when = new Date(at)
+
+  scene.hour = when.getHours() + when.getMinutes() / 60
+  scene.at = await update($, now, () => at)
+
+  return at
+}
+
 // The auto-compact point, read from a local estimate (`summary` sends no request),
 // once per window: it only changes with the model.
 let gauged: { window: number; at: number | null } = { window: 0, at: null }
@@ -197,10 +209,8 @@ const share = (tokens: number, window: number, compactAt: number | null) =>
   Math.round((tokens / (compactAt ?? window)) * 100)
 
 const feed = async ($: EngineInterface, context: SessionContextUsage) => {
-  const at = await $.clock.now()
+  const at = await clocked($)
   const compactAt = await gauge($, context.window)
-
-  scene.at = await update($, now, () => at)
   scene.belly = await update($, belly, last => {
     // Right after a compaction the window reports no fill: wait for a real one
     // rather than count the whole compacted context as a meal.
@@ -228,9 +238,7 @@ const feed = async ($: EngineInterface, context: SessionContextUsage) => {
 }
 
 const burp = async ($: EngineInterface, tokensAfter: number | undefined) => {
-  const at = await $.clock.now()
-
-  scene.at = await update($, now, () => at)
+  const at = await clocked($)
   scene.belly = await update($, belly, last =>
     last === null
       ? null
@@ -253,9 +261,7 @@ const stock = async ($: EngineInterface, limits: Limit[]) => {
 }
 
 const tick = async ($: EngineInterface) => {
-  const at = await $.clock.now()
-
-  scene.at = await update($, now, () => at)
+  const at = await clocked($)
   await rally($, true)
 }
 
@@ -418,6 +424,7 @@ export const register: Register = on => {
 
   on('prompt.submit', ($, e, next) => {
     serve(scene, tokens(e.text), PROMPT)
+    perk(scene)
 
     return next(e)
   })
@@ -450,7 +457,7 @@ export const register: Register = on => {
   // Subagents' turns complete too, carrying their agentId: only the main turn ends the meal.
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
-      finishTurn(scene)
+      finishTurn(scene, e.isAborted)
       await update($, combo, () => 0)
       await act($, '')
     }
@@ -532,7 +539,7 @@ export const register: Register = on => {
       ...limits.map(limit => `  ${WINDOWS[limit.kind] ?? limit.kind.slice(0, 7)} ${Math.round(limit.percentUsed)}%`),
       '  /token-monster',
     ]
-    const head = `(${eye})(${eye}) ${activity !== '' ? `> ${activity}${hits >= 2 ? ` ${hits} HITS` : ''}` : say}`
+    const head = `(${eye})(${eye}) ${activity !== '' ? `> ${activity}${hits >= 2 ? ` on fire x${hits}` : ''}` : say}`
     const meter = ` ${used}${left} ${full.percent}%`
     const room = e.props.bodyColumns - 2
     // What fits: the face and words first, cut short if they must, then the gauges.
@@ -580,8 +587,10 @@ export const register: Register = on => {
               'SUPER MODE 3!!! power level over 9000',
             ][power]!,
           }
-    const chain = hits >= 2 ? `  ${hits} HIT COMBO` : ''
-    const columns = Math.max(16, Math.min(48, e.props.bodyColumns))
+    const chain = hits >= 2 ? `  on fire x${hits}` : ''
+    // The sprite takes up to 64 columns; the readout stays a 48 column block under it.
+    const wide = Math.max(16, Math.min(64, e.props.bodyColumns))
+    const columns = Math.min(48, wide)
     const width = Math.max(6, Math.min(BAR, columns - 23))
     const remark = larder(limits)
     const tint = hex(PALETTE[color] ?? 0x3d7bff)
@@ -604,14 +613,14 @@ export const register: Register = on => {
     // Raster draws on the terminal only; elsewhere it is an empty fragment.
     if (e.surface === 'terminal' && 'Raster' in elements) {
       const { Raster } = elements
-      const rows = Math.max(6, Math.min(16, e.props.scroll.bodyRows - 9))
+      const rows = Math.max(6, Math.min(22, e.props.scroll.bodyRows - 9))
 
-      canvas = { columns, rows }
+      canvas = { columns: wide, rows }
       if (loop === undefined) {
         settle(scene)
         loop = $.clock.every(1000 / FPS, () => void frame($))
       }
-      sprite = <Raster key="sprite" columns={columns} rows={rows} cells={encode(paint(scene, columns, rows * 2), columns, rows)} />
+      sprite = <Raster key="sprite" columns={wide} rows={rows} cells={encode(paint(scene, wide, rows * 2), wide, rows)} />
     } else {
       const drawing = ASCII[monster] ?? ASCII.cookie!
 

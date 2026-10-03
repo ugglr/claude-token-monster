@@ -56,7 +56,7 @@ test('the readout shows the belly, its fill and the last bite, on every surface'
     expect(await ui.find(text('last bite +100k, fed 0m ago'))).toBeDefined()
 
     if (surface === 'terminal') {
-      expect((await ui.find({ type: 'Raster' }))?.props).toMatchObject({ key: 'sprite', columns: 46, rows: 16 })
+      expect((await ui.find({ type: 'Raster' }))?.props).toMatchObject({ key: 'sprite', columns: 46, rows: 22 })
     } else {
       expect(await ui.find(text(' ( O )( O )'))).toBeDefined()
     }
@@ -242,19 +242,19 @@ test('tool calls chain into a combo in the readout; it lapses after a pause and 
     await call($, { tool: 'Read', file_path: `f${i}.ts` })
     await clock.advance(1000)
   }
-  expect(await ui.find(text('> thinking...  3 HIT COMBO'))).toBeDefined()
+  expect(await ui.find(text('> thinking...  on fire x3'))).toBeDefined()
 
   await clock.advance(5000)
-  expect(await ui.find(text(/HIT COMBO/))).toBeUndefined()
+  expect(await ui.find(text(/on fire/))).toBeUndefined()
 
   await call($, { tool: 'Read', file_path: 'late.ts' })
   expect(await ui.find(text('> thinking...'))).toBeDefined()
 
   await call($, { tool: 'Read', file_path: 'again.ts' })
-  expect(await ui.find(text('> thinking...  2 HIT COMBO'))).toBeDefined()
+  expect(await ui.find(text('> thinking...  on fire x2'))).toBeDefined()
 
   await $.turn.complete({ ...done, turnId: 't1' })
-  expect(await ui.find(text(/HIT COMBO/))).toBeUndefined()
+  expect(await ui.find(text(/on fire/))).toBeUndefined()
 })
 
 test('a turn that landed a combo ends in a K.O., however long the answer took', () => {
