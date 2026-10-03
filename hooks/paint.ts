@@ -1936,7 +1936,6 @@ const torso = (c: Canvas, f: Shape) => {
 
     for (const side of [-1, 1]) {
       for (let k = 0; k < 3; k++) {
-        // Legs splay outward and up to a knee, then angle down to a pointed foot.
         const step = Math.sin(wave * 2.4 + k * 2.1 + (side > 0 ? 1 : 0)) * (f.eating ? 1.2 : 0.8)
         const [ax, ay] = [cx + side * rx * (0.82 - k * 0.12), cy + ry * (0.15 + k * 0.28)]
         const [kx, ky] = [ax + side * rx * (0.32 + k * 0.06), ay - ry * (0.3 - k * 0.12) + step * 0.3]
@@ -2113,8 +2112,8 @@ const face = (c: Canvas, f: Shape, s: Scene) => {
       : monster === 'crab'
         ? [[cx - rx * 0.3, cy - ry * 1.45, -1], [cx + rx * 0.3, cy - ry * 1.45, 1]]
         : monster === 'cookie'
-        ? [[cx - rx * 0.32, cy - ry * 0.8, -1], [cx + rx * 0.32, cy - ry * 0.8, 1]]
-        : [[cx - rx * 0.34, cy - ry * 0.22, -1], [cx + rx * 0.34, cy - ry * 0.22, 1]]
+          ? [[cx - rx * 0.32, cy - ry * 0.8, -1], [cx + rx * 0.32, cy - ry * 0.8, 1]]
+          : [[cx - rx * 0.34, cy - ry * 0.22, -1], [cx + rx * 0.34, cy - ry * 0.22, 1]]
   const re = eyeSize(f)
   const look = monster === 'cookie' ? s.googly : s.gaze
   const lid = m.eyes === 'open' ? Math.max(s.lid, f.blink ? 1 : 0) : 0
@@ -2150,10 +2149,10 @@ const face = (c: Canvas, f: Shape, s: Scene) => {
         c.put(ex + Math.cos(angle) * rr, ey + Math.sin(angle) * rr, INK)
       }
     } else if (m.eyes === 'happy' || m.eyes === 'closed') {
-      // ^ ^ for joy, a sleepy curve for rest. The cookie's eyes stand on its head:
-      // joy keeps their whites, and sleep closes them as lidded balls, so neither
-      // vanishes into the sky.
-      if (monster === 'cookie') {
+      // ^ ^ for joy, a sleepy curve for rest. The cookie's and the crab's eyes stand
+      // above the head: joy keeps their whites, and sleep closes them as lidded balls,
+      // so neither vanishes into the sky.
+      if (monster === 'cookie' || monster === 'crab') {
         if (m.eyes === 'happy') c.disc(ex, ey, re, WHITE)
         else {
           c.disc(ex, ey, re, mix(body, INK, 0.6))

@@ -1,4 +1,5 @@
 // Generated from hooks/paint.ts, the mod's renderer. Do not edit; rebuild from the repo root with:
+// npx esbuild hooks/paint.ts --format=esm --target=es2020 --outfile=docs/paint.js
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
@@ -1465,7 +1466,7 @@ const face = (c, f, s) => {
         c.put(ex + Math.cos(angle) * rr, ey + Math.sin(angle) * rr, INK);
       }
     } else if (m.eyes === "happy" || m.eyes === "closed") {
-      if (monster === "cookie") {
+      if (monster === "cookie" || monster === "crab") {
         if (m.eyes === "happy") c.disc(ex, ey, re, WHITE);
         else {
           c.disc(ex, ey, re, mix(body, INK, 0.6));
