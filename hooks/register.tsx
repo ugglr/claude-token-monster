@@ -95,6 +95,8 @@ const look = atom({ plugin: 'token-monster', key: 'look' } as const, { monster: 
 const now = atom({ plugin: 'token-monster', key: 'now' } as const, 0)
 const pantry = atom({ plugin: 'token-monster', key: 'pantry' } as const, [])
 const doing = atom({ plugin: 'token-monster', key: 'doing' } as const, '')
+// The diet's own value, read here for the readout; the state scan wants each atom in its file.
+const armed = atom({ plugin: 'token-monster', key: 'armed' } as const, [])
 
 // What the sprite animates from; the atoms above are what the readout draws.
 const scene: Scene = {
@@ -206,7 +208,11 @@ const act = async ($: EngineInterface, text: string) => {
 }
 
 const count = async ($: EngineInterface) => {
-  scene.minions = (await $.agent.list()).filter(agent => agent.status === 'running').length
+  try {
+    scene.minions = (await $.agent.list()).filter(agent => agent.status === 'running').length
+  } catch {
+    // Unknown this time; the next poll tries again.
+  }
 }
 
 const restyle = async ($: EngineInterface, change: (current: Look) => Look) => {
@@ -392,6 +398,7 @@ export const register: Register = on => {
     const full = (await read($, belly)) ?? { percent: 0, tokens: 0, window: 0, ate: 0, fedAt: at, burpAt: null, known: false }
     const limits = await read($, pantry)
     const activity = await read($, doing)
+    const dieting = (await read($, armed)).length
     const { monster, color } = await read($, look)
     const { eye, say } = feeling(full, at)
     const columns = Math.max(16, Math.min(48, e.props.bodyColumns))
@@ -456,6 +463,7 @@ export const register: Register = on => {
           ),
         )}
         {remark !== undefined && <Text dimColor>{remark}</Text>}
+        {dieting > 0 && <Text color="yellow">diet armed: your next /compact eats {dieting}</Text>}
         <Box>
           <Button
             key="monster"

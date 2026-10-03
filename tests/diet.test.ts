@@ -158,6 +158,31 @@ test('an armed diet leaves automatic compaction and Cancel leaves /compact alone
   expect(calls.summarized).toBe(2)
 })
 
+test('an armed /compact after the armed results are gone is an ordinary /compact', async ($, on) => {
+  const calls = core(on)
+
+  await arm($, on)
+
+  const summary = [{ role: 'user' as const, text: 'summary of earlier', toolUses: [] }]
+
+  await $.session.compact({ trigger: 'manual', messages: summary })
+  expect(calls.summarized).toBe(1)
+})
+
+test('the main readout says when the diet is armed', async ($, on) => {
+  await arm($, on)
+
+  const main = await $.ui.mount({
+    plugin: 'token-monster',
+    surface: 'desktop',
+    component: 'Pane',
+    requestId: 'token-monster',
+    props: { title: 'Token Monster', isFocused: false, bodyColumns: 46, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+  })
+
+  expect(await main.find({ type: 'Text', text: 'diet armed: your next /compact eats 1' })).toBeDefined()
+})
+
 test('a burp that fails never costs the meal', async ($, on) => {
   const calls = core(on)
 

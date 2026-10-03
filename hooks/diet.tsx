@@ -118,12 +118,20 @@ export const registerDiet = (on: On) => {
     if (ids.length === 0 || e.agentId !== undefined) return next(e)
 
     await update($, armed, () => [])
-    await update($, menu, dishes => dishes.filter(dish => !ids.includes(dish.id)))
     await update($, picked, () => [])
 
     if (!Array.isArray(e.messages) || e.messages.length === 0) return { skip: 'me could not see the conversation' }
 
-    return { messages: stubbed(e.messages, new Set(ids)) }
+    // Results an earlier compaction or /clear already took are gone: with none of the
+    // armed ones left, this is an ordinary /compact.
+    const present = new Set(e.messages.flatMap(message => message.toolResults ?? []).map(result => result.tool_use_id))
+    const meal = new Set(ids.filter(id => present.has(id)))
+
+    if (meal.size === 0) return next(e)
+
+    await update($, menu, dishes => dishes.filter(dish => !meal.has(dish.id)))
+
+    return { messages: stubbed(e.messages, meal) }
   })
 
   on('ui.render', { component: 'Pane', requestId: DIET }, async ($, e) => {
