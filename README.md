@@ -2,6 +2,8 @@
 
 [![Dad approved](https://img.shields.io/badge/Dad-approved-brightgreen)](https://github.com/ugglr/dad)
 
+**Website: [ugglr.github.io/claude-token-monster](https://ugglr.github.io/claude-token-monster/)**, with live monsters you can feed.
+
 A pixel-art virtual pet that lives in a side pane of Claude Code and eats your tokens. It is also a dashboard: one glance at the monster tells you how full your context is, how close you are to your limits, and what Claude is doing right now.
 
 ![Token Monster eating through a session](media/demo.gif)

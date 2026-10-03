@@ -415,11 +415,10 @@ const stroke = async ($: EngineInterface) => {
   await reply($, eye, lines[petted % lines.length]!)
 }
 
-// The scene's tokens already in the store, and when the store was last written: at
-// most every BANK_MS, and at a turn's end once that much time has passed.
+// The scene's tokens already in the store. They are banked every BANK_MS, and at
+// once when a main turn ends.
 const BANK_MS = 30_000
 let banked = 0
-let bankedAt = -Infinity
 
 const bank = async ($: EngineInterface) => {
   // Claimed before any await, so the timer and another caller never bank the same tokens.

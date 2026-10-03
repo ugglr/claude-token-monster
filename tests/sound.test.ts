@@ -237,7 +237,7 @@ test('super mode powers up with a helper and down after it', async ($, on) => {
 
 // Snoring follows the sprite's own sleep rule, counted in animation frames (unit-tested
 // in monster.test.ts); here, with no frames drawn, only the hunger side shows.
-test('a hungry monster whimpers once, and does not snore', async ($, on) => {
+test('a hungry monster whimpers once, not again while it stays hungry', async ($, on) => {
   const { clock, played } = world(on, { soundHeard: true })
 
   await run($, 'sound on')
