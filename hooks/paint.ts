@@ -48,13 +48,26 @@ export type Scene = {
   comboAt: number
   lastHitAt: number
   finish: { text: string; at: number } | null
+  // Petting: when, how it took it, and an affection that builds and fades over minutes.
+  petAt: number
+  fuss: Fuss
+  affection: number
+  lovedAt: number
+  // Typing after a long quiet: it waves hello first.
+  greetAt: number
+  // The idle antic running, the frame the next may start (-1 until it is calm), the last one.
+  antic: { kind: Antic; at: number; len: number; seed: number } | null
+  anticAt: number
+  lastAntic: Antic | null
+  // How far it has stepped from the middle, chasing something.
+  shift: number
 }
 
 type Point = { x: number; y: number }
 type Serving = { tokens: number; color: number }
 type Mote = { x: number; y: number; px: number; py: number; color: number }
 type Bit = {
-  kind: 'crumb' | 'spark' | 'confetti' | 'z' | 'puff' | 'tear' | 'drool' | 'firefly' | 'ember'
+  kind: 'crumb' | 'spark' | 'confetti' | 'z' | 'puff' | 'tear' | 'drool' | 'firefly' | 'ember' | 'heart'
   x: number
   y: number
   vx: number
@@ -189,6 +202,15 @@ export const createScene = (look: Look): Scene => ({
   comboAt: -100,
   lastHitAt: -Infinity,
   finish: null,
+  petAt: -100,
+  fuss: 'purr',
+  affection: 0,
+  lovedAt: 0,
+  greetAt: -100,
+  antic: null,
+  anticAt: -1,
+  lastAntic: null,
+  shift: 0,
 })
 
 // Tokens arriving: they heat the monster up and fly into its mouth. Typing only
@@ -255,6 +277,7 @@ export const settle = (s: Scene) => {
   s.servings = []
   s.motes = []
   s.bits = []
+  s.antic = null
 }
 
 const comboShown = (s: Scene) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES
@@ -272,7 +295,11 @@ export const lively = (s: Scene) =>
   s.tick - s.perkAt < PERK ||
   Math.abs(s.squashV) > 0.01 ||
   comboShown(s) ||
-  (s.finish !== null && s.tick - s.finish.at < 18)
+  (s.finish !== null && s.tick - s.finish.at < 18) ||
+  s.antic !== null ||
+  s.tick - s.petAt < PET ||
+  s.tick - s.greetAt < GREET ||
+  Math.abs(s.shift) > 0.05
 
 // What a frame reads off the scene: the monster's place and size, and how it feels.
 const shape = (s: Scene, width: number, height: number) => {
@@ -296,17 +323,19 @@ const shape = (s: Scene, width: number, height: number) => {
   const breath = 1 + Math.sin(s.breathe) * (sleeping ? 0.05 : 0.025)
   const rx0 = Math.min(width * 0.36, r0 * (0.78 + 0.5 * full) * (starving ? 0.85 : 1) * wobble) * tight
   const ry0 = Math.min(height * 0.3, r0 * (0.82 + 0.3 * full)) * tight * breath
-  const rx = rx0 * (1 + s.squash * 0.7)
-  const ry = ry0 * (1 - s.squash)
+  const move = motion(s, r0)
+  const rx = rx0 * (1 + s.squash * 0.7) * move.sx
+  const ry = ry0 * (1 - s.squash) * move.sy
   const hopP = (t - s.cheerAt) / HOP
   const hop = hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0
   const lift =
     (monster === 'ghost' ? 3 + Math.sin(s.breathe * 1.3) * 1.4 : 0) +
     (eating ? Math.abs(Math.sin(s.bob)) * (0.3 + s.heat * 1.8) : 0) +
     s.power * 1.5 +
-    hop
+    hop +
+    move.lift
   const shake = s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2) : 0
-  const cx = width / 2 + shake
+  const cx = width / 2 + shake + Math.round(s.shift + move.dx)
   const feet = monster === 'ghost' || monster === 'slime' ? 0 : r0 * 0.18
   // However it floats, the head stays on screen.
   const cy = floor - feet - ry - Math.min(lift, Math.max(0, floor - feet - 2 * ry - 4))
@@ -347,12 +376,18 @@ const shape = (s: Scene, width: number, height: number) => {
     blink: t - s.blinkAt < 3 && t - s.typedAt >= 15,
     body: starving ? mix(PALETTE[s.look.color] ?? 0x3d7bff, 0x8a8f99, 0.55) : (PALETTE[s.look.color] ?? 0x3d7bff),
     mouth: { x: cx, y: cy + ry * (monster === 'slime' ? 0.3 : 0.34) },
+    // Where it stands at rest, and the middle of its body there, for the antics' props.
+    home: width / 2,
+    rest: floor - feet - ry,
+    back: move.back,
+    petting: t - s.petAt < PET,
+    greeting: t - s.greetAt < GREET,
   }
 }
 
 type Shape = ReturnType<typeof shape>
 
-type Eyes = 'open' | 'happy' | 'closed' | 'dizzy' | 'squeeze'
+type Eyes = 'open' | 'happy' | 'closed' | 'dizzy' | 'squeeze' | 'plead'
 type Brows = 'none' | 'fierce' | 'sad'
 
 // How it looks right now: eyes, brows, and the targets the face eases toward.
@@ -369,10 +404,22 @@ const mood = (s: Scene, f: Shape) => {
 
   if (f.bursting && f.power <= 0.5) return set('dizzy', 'sad', 0, 0.35 + 0.15 * Math.sin(f.t * 0.3), -0.3, 0.3)
   if (f.angry && f.t - s.errorAt < 10) return set('squeeze', 'sad', 0, 0.15, -0.8, 0)
+  if (f.petting) {
+    if (s.fuss === 'stir') return set('closed', 'none', 1, 0.1, 0.9, 1)
+    if (s.fuss === 'plead') return set('plead', 'sad', 0, 0, -0.35, 0.6)
+
+    return set('happy', 'none', 0, f.eating ? 0.3 + 0.6 * chomp : s.fuss === 'spin' ? 0.45 : 0, 1, 1)
+  }
+  if (f.greeting) return set('happy', 'none', 0, 0.45, 1, 0.5)
   if (f.burping) return set('happy', 'none', 0, 1, 0.6, 0.6)
   if (f.cheering) return set('happy', 'none', 0, 0.75, 1, 1)
   if (f.power > 0.5) return set('open', 'fierce', 0.1, f.eating ? 0.3 + 0.6 * chomp : 0.5, 0.3, 0.2)
   if (f.blaze > 0.3) return set('open', 'fierce', 0.15, f.eating ? 0.3 + 0.6 * chomp : 0.25, 0.6, 0.4)
+  if (s.antic !== null) {
+    const [eyes, brows, lid, open, smile, blush] = feel(s, f, s.antic)
+
+    return set(eyes, brows, lid, open, smile, blush)
+  }
   if (f.sleeping) return set('closed', 'none', 1, 0.12 + 0.06 * Math.sin(f.wave), 0.1, 0.35)
   if (f.yawning) return set('closed', 'none', 1, 1, 0, 0)
   if (f.eating) return set('open', 'none', 0.1 + f.heat * 0.35, (0.25 + 0.75 * f.heat) * chomp, 0.6, 0.2 + f.heat * 0.7)
@@ -382,6 +429,535 @@ const mood = (s: Scene, f: Shape) => {
   if (f.sad) return set('open', 'sad', 0.3, 0, -0.7, 0)
   if (f.stuffed) return set('open', 'none', 0.45, 0, 0.8, 0.6)
   return set('open', 'none', 0.05, 0, 0.35, 0.15)
+}
+
+// Life: petting, the idle antics and the greeting. Each is a few seconds of
+// motion read off the scene, so paint() stays pure and step() moves it on.
+
+export type Fuss = 'purr' | 'wiggle' | 'spin' | 'stir' | 'plead'
+export type Antic = 'stretch' | 'scratch' | 'look' | 'wave' | 'chase' | 'juggle' | 'hop' | 'peek' | 'star'
+
+// Frames each antic runs (1.5 to 4 seconds), and how often it comes up.
+const ANTICS: Record<Antic, { len: number; weight: number }> = {
+  stretch: { len: 32, weight: 3 },
+  scratch: { len: 30, weight: 3 },
+  look: { len: 40, weight: 3 },
+  wave: { len: 24, weight: 2 },
+  chase: { len: 40, weight: 3 },
+  juggle: { len: 40, weight: 2 },
+  hop: { len: 18, weight: 2 },
+  peek: { len: 34, weight: 2 },
+  star: { len: 38, weight: 2 },
+}
+const PET = 22
+const GREET = 24
+// Two minutes of frames: typing after that long a quiet earns a hello.
+const AWAY = 1200
+// 15 to 45 seconds of calm between antics.
+const LULL = 150
+const LULL_MORE = 300
+const HEART = 0xff4f7b
+
+// How fond of you it is right now: each pet adds one, and it halves every two minutes.
+export const fondness = (s: Scene, at: number) => s.affection * 0.5 ** (Math.max(0, at - s.lovedAt) / (2 * MINUTE))
+
+// You petted it, at `at` ($.clock milliseconds). Asleep, it stirs and smiles without
+// waking; starving, it pleads; otherwise the fonder it is, the bigger the fuss.
+export const pet = (s: Scene, at: number): Fuss => {
+  const asleep = !s.busy && s.heat <= 0.02 && s.tick - s.activeAt > DOZE
+  const starving = s.belly !== null && at - s.belly.fedAt >= STARVING
+
+  s.affection = Math.min(6, fondness(s, at) + 1)
+  s.lovedAt = at
+  s.petAt = s.tick
+  s.fuss = asleep ? 'stir' : starving ? 'plead' : s.affection > 3.5 ? 'spin' : s.affection > 1.5 ? 'wiggle' : 'purr'
+  s.antic = null
+  if (!asleep) s.activeAt = s.tick
+
+  return s.fuss
+}
+
+// A key pressed in the prompt. After a long quiet it waves hello first; says whether it does.
+export const typed = (s: Scene) => {
+  const away = s.tick - s.activeAt >= AWAY && s.tick - s.typedAt >= AWAY
+
+  if (away) s.greetAt = s.tick
+  s.typedAt = s.tick
+
+  return away
+}
+
+// Whether nothing at all is going on, so an antic may run.
+const calm = (s: Scene, f: Shape) =>
+  !s.busy &&
+  !f.eating &&
+  !f.typing &&
+  !f.perking &&
+  !f.cheering &&
+  !f.sleeping &&
+  !f.yawning &&
+  !f.starving &&
+  !f.angry &&
+  !f.petting &&
+  !f.greeting &&
+  s.power < 0.05 &&
+  s.servings.length === 0 &&
+  s.motes.length === 0 &&
+  !comboShown(s)
+
+// A weighted pick, never the one just done; the falling star only after dark,
+// the side scratch only for a monster with arms.
+const choose = (s: Scene, f: Shape): Antic => {
+  const night = daylight(s.hour) < 0.4
+  const options = (Object.keys(ANTICS) as Antic[]).filter(
+    kind => kind !== s.lastAntic && (kind !== 'star' || night) && (kind !== 'scratch' || f.monster !== 'ghost'),
+  )
+  let roll = random() * options.reduce((sum, kind) => sum + ANTICS[kind].weight, 0)
+
+  return options.find(kind => (roll -= ANTICS[kind].weight) < 0) ?? options[0]!
+}
+
+const progress = (s: Scene) => (s.antic === null ? 0 : (s.tick - s.antic.at) / s.antic.len)
+// Up over the first `rise` of the way, held, down over the last `fall`.
+const swell = (p: number, rise: number, fall: number) => clamp(Math.min(p / rise, (1 - p) / fall))
+
+// How the body moves: a step aside, a lift, a stretch, and for a spin whether its back is turned.
+const motion = (s: Scene, r0: number) => {
+  const t = s.tick
+  const m = { dx: 0, lift: 0, sx: 1, sy: 1, back: false }
+  const ghost = s.look.monster === 'ghost'
+
+  if (t - s.petAt < PET) {
+    const p = (t - s.petAt) / PET
+
+    if (s.fuss === 'purr') m.dx = Math.sin(t * 1.5) * 1.2 * (1 - p)
+    if (s.fuss === 'wiggle') {
+      m.dx = Math.sin(t * 1.5) * 2 * (1 - p)
+      m.lift = Math.abs(Math.sin(p * Math.PI * 2)) * r0 * 0.18
+    }
+    if (s.fuss === 'spin') {
+      const q = clamp(p / 0.6)
+      const turn = Math.cos(q * Math.PI * 2)
+
+      m.sx = Math.max(0.25, Math.abs(turn))
+      m.back = turn < 0
+      m.lift = Math.sin(Math.PI * q) * r0 * 0.4
+    }
+    if (s.fuss === 'stir') m.dx = p < 0.6 ? Math.sin(t * 0.9) * 0.8 : 0
+    if (s.fuss === 'plead') m.lift = Math.abs(Math.sin(t * 0.45)) * 0.8
+
+    return m
+  }
+
+  if (t - s.greetAt < GREET) {
+    const p = (t - s.greetAt) / GREET
+
+    m.lift = p < 0.4 ? Math.sin((Math.PI * p) / 0.4) * r0 * 0.25 : 0
+    if (ghost) m.dx = Math.sin(t * 0.9) * 2
+
+    return m
+  }
+
+  const a = s.antic
+
+  if (a === null) return m
+
+  const p = progress(s)
+
+  if (a.kind === 'stretch') {
+    const k = swell(p, 0.25, 0.25)
+
+    m.sy = 1 + 0.16 * k
+    m.sx = 1 - 0.08 * k
+    // A satisfied shake to finish.
+    if (p > 0.8) m.dx = Math.sin(t * 2.2) * 0.8
+  }
+  if (a.kind === 'look') {
+    m.dx = p < 0.1 ? 0 : p < 0.32 ? -1 : p < 0.56 ? 1 : 0
+    // The shrug: shoulders up and down.
+    m.lift = p >= 0.62 ? Math.sin(clamp((p - 0.62) / 0.3) * Math.PI) * 1.6 : 0
+  }
+  // No arms to wave with: the ghost rocks side to side instead.
+  if (a.kind === 'wave' && ghost) {
+    m.dx = Math.sin(t * 0.9) * 2
+    m.lift = Math.abs(Math.sin(t * 0.45)) * 1.5
+  }
+  // Leaning into the itch.
+  if (a.kind === 'scratch') m.dx = swell(p, 0.15, 0.15)
+  if (a.kind === 'chase') {
+    m.lift =
+      p < 0.56
+        ? Math.abs(Math.sin(p * Math.PI * 6)) * r0 * 0.12
+        : p < 0.74
+          ? Math.sin(((p - 0.56) / 0.18) * Math.PI) * r0 * 0.3
+          : 0
+  }
+  if (a.kind === 'hop') m.lift = Math.abs(Math.sin(p * Math.PI * 3)) * r0 * 0.3
+  if (a.kind === 'peek') {
+    const k = swell(p, 0.15, 0.2)
+
+    m.sy = 1 - 0.07 * k
+    m.sx = 1 + 0.04 * k
+    if (p >= 0.8) m.lift = Math.abs(Math.sin(((p - 0.8) / 0.2) * Math.PI * 2)) * 1.2
+  }
+  if (a.kind === 'star' && hash(a.at, 4) < 0.7 && p > 0.62 && p < 0.86) m.lift = Math.sin(((p - 0.62) / 0.24) * Math.PI) * r0 * 0.25
+  if (a.kind === 'juggle' && p > 0.9) m.lift = Math.sin(((p - 0.9) / 0.1) * Math.PI) * 1.2
+
+  return m
+}
+
+// The thing an antic plays with, where it is at `p`: the firefly or butterfly, the
+// falling star, the token. Null when there is none (yet, or any more).
+const prop = (s: Scene, f: Shape, p = progress(s)) => {
+  const a = s.antic
+
+  if (a === null) return null
+
+  const side = a.seed < 0.5 ? -1 : 1
+
+  if (a.kind === 'chase') {
+    const away = clamp((p - 0.66) / 0.34)
+    const y0 = f.rest - f.ry * 0.9
+
+    return {
+      x: f.home + side * f.rx * 1.3 * Math.cos(Math.PI * 2 * 1.15 * Math.min(p, 0.66)) + side * away * f.rx * 2.5,
+      y: y0 + Math.sin(Math.PI * 2 * 2.3 * p) * f.ry * 0.3 - away * away * (y0 + 6),
+    }
+  }
+
+  if (a.kind === 'star') {
+    const { aim, caught, start } = falling(s, f)
+    const land = caught ? aim : aim - side * (f.rx + 3)
+    const q = clamp((p - 0.12) / (caught ? 0.48 : 0.6))
+
+    if ((caught && p >= 0.6) || p >= 0.72) return null
+
+    return {
+      x: ease(start, land, q),
+      y: ease(2, caught ? f.rest + f.ry * 0.34 : f.floor - 1, q ** 1.4),
+    }
+  }
+
+  if (a.kind === 'juggle') {
+    const head = { x: f.cx, y: f.cy - f.ry - 1.5 }
+    const [left, right] =
+      f.monster === 'ghost' ? [head, head] : [-1, 1].map(side => ({ x: f.cx + side * f.rx * 0.95, y: f.cy + f.ry * 0.15 }))
+    const arc = (from: Point, to: Point, u: number, height: number) => ({
+      x: ease(from.x, to.x, u),
+      y: ease(from.y, to.y, u) - 4 * height * u * (1 - u),
+    })
+
+    // Three throws hand to hand (bounces on the head, for the ghost), then a high one into the mouth.
+    if (p < 0.72) {
+      const q = (p / 0.72) * 3
+      const k = Math.floor(q)
+
+      return arc(k % 2 === 0 ? left! : right!, k % 2 === 0 ? right! : left!, q - k, f.monster === 'ghost' ? 5 : f.ry * 1.3 + 2)
+    }
+
+    return p < 0.9 ? arc(right!, f.mouth, (p - 0.72) / 0.18, f.ry * 1.4 + 4) : null
+  }
+
+  return null
+}
+
+// Where the star falls from, where it is aimed, and whether the monster gets it.
+const falling = (s: Scene, f: Shape) => {
+  const a = s.antic!
+  const side = a.seed < 0.5 ? -1 : 1
+  const aim = f.home + (hash(a.at, 3) - 0.5) * f.rx * 1.2
+
+  return { aim, caught: hash(a.at, 4) < 0.7, start: aim + side * f.home * 0.7 }
+}
+
+type Feel = [Eyes, Brows, number, number, number, number]
+
+// The face for each antic, as targets for mood(): eyes, brows, lid, mouth open, smile, blush.
+const feel = (s: Scene, f: Shape, a: NonNullable<Scene['antic']>): Feel => {
+  const p = progress(s)
+
+  if (a.kind === 'stretch') return p < 0.78 ? ['closed', 'none', 1, 0.55, 0.3, 0.2] : ['happy', 'none', 0, 0, 0.8, 0.4]
+  if (a.kind === 'scratch') return ['open', 'none', 0.5, 0, 0.7, 0.3]
+  if (a.kind === 'look') return p < 0.6 ? ['open', 'none', 0, 0, 0.1, 0] : ['open', 'sad', 0, 0, -0.05, 0]
+  if (a.kind === 'wave' || a.kind === 'hop') return ['happy', 'none', 0, 0.35, 1, 0.5]
+  if (a.kind === 'chase') {
+    if (p < 0.6) return ['open', 'none', 0, 0.2, 0.6, 0.3]
+    if (p < 0.74) return ['open', 'fierce', 0, 0.5, 0.4, 0.3]
+    return p < 0.88 ? ['open', 'none', 0, 0.3, 0.3, 0.2] : ['happy', 'none', 0, 0, 0.9, 0.4]
+  }
+  if (a.kind === 'juggle') {
+    if (p < 0.78) return ['open', 'none', 0, 0.1, 0.7, 0.3]
+    if (p < 0.9) return ['open', 'none', 0, 0.8, 0.5, 0.3]
+    return ['happy', 'none', 0, Math.abs(Math.sin(f.t * 0.8)) * 0.4, 1, 0.7]
+  }
+  if (a.kind === 'peek') return p < 0.8 ? ['open', 'none', 0, 0.15, 0, 0] : ['happy', 'none', 0, 0, 0.8, 0.3]
+
+  const { caught } = falling(s, f)
+
+  if (p < 0.12) return ['open', 'none', 0, 0, 0.4, 0]
+  if (p < 0.35) return ['open', 'none', 0, 0.2, 0.5, 0.2]
+  if (p < 0.6) return ['open', 'none', 0, 0.9, 0.4, 0.3]
+  if (caught) return ['happy', 'none', 0, 0, 1, 1]
+  return p < 0.72 ? ['open', 'none', 0, 0.5, 0.2, 0] : ['open', 'sad', 0.2, 0, -0.6, 0]
+}
+
+// Where the eyes look: up at you to plead, after the critter, the star or the
+// token, around the garden, or down at the readout under the picture.
+const glance = (s: Scene, f: Shape): Point | null => {
+  if (f.petting) return s.fuss === 'plead' ? { x: 0, y: -0.7 } : null
+  if (f.greeting) return { x: 0, y: 0 }
+
+  const a = s.antic
+
+  if (a === null) return null
+
+  const p = progress(s)
+  const thing = prop(s, f)
+
+  if (thing !== null) {
+    const [dx, dy] = [thing.x - f.cx, thing.y - (f.cy - f.ry * 0.4)]
+    const d = Math.max(1, Math.hypot(dx, dy))
+
+    return { x: dx / d, y: dy / d }
+  }
+
+  if (a.kind === 'look') return p < 0.1 ? { x: 0, y: 0 } : p < 0.32 ? { x: -0.95, y: 0.1 } : p < 0.56 ? { x: 0.95, y: 0.1 } : { x: 0, y: 0 }
+  if (a.kind === 'scratch') return { x: 0.8, y: 0.6 }
+  if (a.kind === 'peek') return p < 0.8 ? { x: Math.sin(p * Math.PI * 5) * 0.8, y: 1 } : { x: 0, y: 0.3 }
+  if (a.kind === 'chase') return { x: (a.seed < 0.5 ? -1 : 1) * 0.6, y: -0.9 }
+  if (a.kind === 'star') return falling(s, f).caught ? { x: 0, y: 0 } : { x: (a.seed < 0.5 ? 1 : -1) * 0.7, y: 0.9 }
+
+  return null
+}
+
+// Where a hand goes for a pet, the greeting or an antic, or null to leave it to the usual poses.
+const pose = (s: Scene, f: Shape, side: number, ax: number, ay: number, length: number, rest: Point): Point | null => {
+  const { t } = f
+  const up = { x: ax + side * length * 0.6, y: ay - length * 1.1 }
+  const wave = { x: ax + side * length * 0.55 + Math.sin(t * 1.1) * length * 0.45, y: ay - length * 1.05 }
+
+  if (f.petting) {
+    const p = (t - s.petAt) / PET
+
+    // Hands clasped under the chin to beg; out wide to spin; on its blushing cheeks to purr.
+    if (s.fuss === 'plead') return { x: f.mouth.x + side * 1.5, y: f.mouth.y + 2.5 }
+    if (s.fuss === 'stir') return null
+    if (s.fuss === 'spin') return p < 0.6 ? { x: ax + side * length * 0.9, y: ay - length * 0.2 } : up
+
+    return { x: f.cx + side * f.rx * 0.8, y: f.cy + f.ry * 0.2 }
+  }
+
+  if (f.greeting) return side === -1 ? wave : null
+
+  const a = s.antic
+
+  if (a === null) return null
+
+  const p = progress(s)
+
+  if (a.kind === 'stretch') {
+    const k = swell(p, 0.25, 0.25)
+
+    return { x: ax + side * length * (0.6 - 0.25 * k), y: ay - length * (0.2 + 1.2 * k) }
+  }
+  if (a.kind === 'scratch') {
+    return side === 1 ? { x: f.cx + f.rx * 0.78, y: f.cy + f.ry * 0.2 + Math.sin(t * 1.6) * 2 } : null
+  }
+  if (a.kind === 'look') return p >= 0.6 ? { x: ax + side * length * 0.95, y: ay - length * 0.15 } : null
+  if (a.kind === 'wave') return side === -1 ? wave : null
+  if (a.kind === 'hop') return { x: ax + side * length * 0.8, y: ay - length * 0.6 }
+  if (a.kind === 'peek') return { x: f.cx + side * f.rx * 0.5, y: f.cy + f.ry * 0.8 }
+
+  if (a.kind === 'chase') {
+    const clap = prop(s, f, 0.66)!
+    const k = p < 0.54 ? 0 : p < 0.64 ? (p - 0.54) / 0.1 : p < 0.78 ? 1 : 1 - (p - 0.78) / 0.12
+
+    return k <= 0 ? null : { x: ease(rest.x, clap.x + side * 1.3, k), y: ease(rest.y, clap.y, k) }
+  }
+
+  if (a.kind === 'juggle') {
+    const thing = prop(s, f)
+    const base = { x: f.cx + side * f.rx * 0.95, y: f.cy + f.ry * 0.15 }
+    const near = thing === null ? 0 : clamp(1 - Math.hypot(thing.x - base.x, thing.y - base.y) / 5)
+
+    return p < 0.92 ? { x: base.x, y: base.y + 1 - near * 2 } : { x: f.cx + side * f.rx * 0.35, y: f.cy + f.ry * 0.55 }
+  }
+
+  // The star: reach up for it; caught, pat the belly.
+  if (p < 0.3) return null
+  if (p < 0.62) return up
+  if (falling(s, f).caught) return { x: f.cx + side * f.rx * 0.35, y: f.cy + f.ry * (0.55 + (t % 6 < 3 ? 0.05 : 0)) }
+
+  return null
+}
+
+// One frame of life: start, run and stop the antics, step toward what it chases,
+// and send up the hearts, sparkles and crumbs.
+const live = (s: Scene, f: Shape) => {
+  const a = s.antic
+
+  if (!calm(s, f)) {
+    s.antic = null
+    s.anticAt = -1
+  } else if (a !== null && s.tick - a.at >= a.len) {
+    s.antic = null
+    s.anticAt = s.tick + LULL + random() * LULL_MORE
+  } else if (a === null && s.anticAt < 0) {
+    s.anticAt = s.tick + LULL + random() * LULL_MORE
+  } else if (a === null && s.tick >= s.anticAt && s.tick - s.activeAt + 40 < DOZE - YAWN) {
+    const kind = choose(s, f)
+
+    s.antic = { kind, at: s.tick, len: ANTICS[kind].len, seed: random() }
+    s.lastAntic = kind
+  }
+
+  const now = s.antic
+  const p = progress(s)
+  const room = Math.max(0, f.home - f.rx - 2)
+  let target = 0
+
+  if (now?.kind === 'chase' && p < 0.62) target = ((prop(s, f)?.x ?? f.home) - f.home) * 0.45
+  if (now?.kind === 'star' && p > 0.1 && p < 0.85) target = falling(s, f).aim - f.home
+
+  s.shift = ease(s.shift, clamp(target, -room, room), 0.15)
+  if (target === 0 && Math.abs(s.shift) < 0.05) s.shift = 0
+
+  const sparkle = (x: number, y: number, n: number, color: number) => {
+    for (let i = 0; i < n; i++) {
+      const angle = (i / n) * Math.PI * 2
+
+      s.bits.push({ kind: 'spark', x, y, vx: Math.cos(angle) * 0.45, vy: Math.sin(angle) * 0.45 - 0.1, life: 16, max: 16, color })
+    }
+  }
+  const heart = (x: number, y: number, vx: number, vy: number, life = 28) =>
+    s.bits.push({ kind: 'heart', x, y, vx, vy, life, max: life, color: HEART })
+
+  if (now !== null) {
+    const e = s.tick - now.at
+    const at = (q: number) => e === Math.round(now.len * q)
+
+    if (now.kind === 'star' && falling(s, f).caught && at(0.6)) {
+      sparkle(f.mouth.x, f.mouth.y - 1, 10, GOLD_LIGHT)
+      s.squashV += 0.1
+    }
+    if (now.kind === 'star' && !falling(s, f).caught && at(0.72)) {
+      s.bits.push({ kind: 'puff', x: f.home + (falling(s, f).aim - f.home) - (now.seed < 0.5 ? -1 : 1) * (f.rx + 3), y: f.floor - 2, vx: 0, vy: -0.2, life: 18, max: 18, color: 0xfff1b0 })
+    }
+    if (now.kind === 'chase' && at(0.66)) {
+      const clap = prop(s, f, 0.66)!
+
+      sparkle(clap.x, clap.y, 4, WHITE)
+    }
+    if (now.kind === 'juggle' && at(0.9)) {
+      s.squashV += 0.08
+      for (let i = 0; i < 5; i++) {
+        s.bits.push({ kind: 'crumb', x: f.mouth.x, y: f.mouth.y, vx: (random() - 0.5) * 1.2, vy: -0.4 - random() * 0.6, life: 22, max: 22, color: GOLD })
+      }
+    }
+    if (now.kind === 'hop' && (at(1 / 3) || at(2 / 3))) s.squashV += 0.1
+    if (now.kind === 'scratch' && e % 7 === 3 && f.monster !== 'ghost') {
+      s.bits.push({ kind: 'crumb', x: f.cx + f.rx * 0.95, y: f.cy + f.ry * 0.3, vx: 0.3 + random() * 0.4, vy: -0.5, life: 16, max: 16, color: mix(f.body, WHITE, 0.45) })
+    }
+  }
+
+  // Petting: hearts float up, more the fonder it is, and a ring of them for a spin.
+  const since = s.tick - s.petAt
+
+  if (since >= 1 && since < PET) {
+    const top = f.cy - f.ry * (f.monster === 'cookie' ? 1.3 : 1) - 2
+    const above = () => [f.cx + (random() - 0.5) * f.rx * 1.2, top] as const
+
+    if ((s.fuss === 'purr' || s.fuss === 'wiggle') && (since === 1 || since % 7 === 0)) heart(...above(), (random() - 0.5) * 0.3, -0.3)
+    if (s.fuss === 'wiggle' && since === 1) heart(...above(), (random() - 0.5) * 0.5, -0.4)
+    if (s.fuss === 'stir' && since === 4) heart(f.cx - f.rx * 0.5, top, -0.1, -0.2, 22)
+    if (s.fuss === 'spin' && since === Math.round(PET * 0.6)) {
+      s.squashV += 0.12
+      for (let i = 0; i < 6; i++) {
+        const angle = (i / 6) * Math.PI * 2 - Math.PI / 2
+
+        heart(f.cx + Math.cos(angle) * (f.rx + 3), f.cy + Math.sin(angle) * (f.ry + 2), Math.cos(angle) * 1.1, Math.sin(angle) * 0.7)
+      }
+    }
+    if (s.fuss === 'plead' && since === 8 && f.monster !== 'slime') {
+      s.bits.push({ kind: 'tear', x: f.cx - f.rx * 0.45, y: f.cy - f.ry * 0.1, vx: 0, vy: 0.2, life: 16, max: 16, color: 0x6ec6ff })
+    }
+  }
+}
+
+// What the antics play with, drawn over the monster: the critter, the star, the
+// token, a question mark over a shrug, and the glow of a star it swallowed.
+const antics = (c: Canvas, s: Scene, f: Shape) => {
+  const a = s.antic
+
+  if (a === null) return
+
+  const p = progress(s)
+  const thing = prop(s, f)
+
+  if (a.kind === 'look' && p >= 0.62 && p < 0.97) write(c, '?', f.cx + f.rx * 0.75, f.cy - f.ry - 5, 1, WHITE, 0xc8d0e0)
+
+  if (a.kind === 'star' && thing === null && falling(s, f).caught && p >= 0.6) {
+    const fade = 1 - (p - 0.6) / 0.4
+
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2 + f.t * 0.15
+
+      if (hash(i, f.t >> 1) < 0.75) c.add(f.cx + Math.cos(angle) * (f.rx + 2), f.cy + Math.sin(angle) * (f.ry + 2), GOLD_LIGHT, fade)
+    }
+  }
+
+  if (thing === null) return
+
+  const { x, y } = thing
+
+  if (a.kind === 'chase' && daylight(s.hour) < 0.4) {
+    const glow = 0.6 + 0.4 * Math.sin(f.t * 0.5)
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const d = Math.hypot(dx, dy)
+
+        if (d <= 2.3) c.add(x + dx, y + dy, 0xd8ff7a, (d < 1.2 ? 0.6 : 0.25) * glow)
+      }
+    }
+    c.put(x, y, 0xf4ffc8)
+  } else if (a.kind === 'chase') {
+    // A butterfly: wings open and shut every other frame.
+    const open = (f.t >> 1) % 2 === 0
+    const wings: [number, number][] = open ? [[-2, -1], [-1, -1], [-1, 0], [1, -1], [2, -1], [1, 0]] : [[-1, -1], [1, -1]]
+
+    for (const [dx, dy] of wings) c.put(x + dx, y + dy, Math.abs(dx) === 2 ? 0xffe066 : 0xff8a3d)
+    c.put(x, y - 1, INK)
+    c.put(x, y, INK)
+  } else if (a.kind === 'star') {
+    if (p < 0.12) {
+      // It appears as a twinkle before it falls.
+      const r = 1 + Math.round((p / 0.12) * 1.5)
+
+      for (let k = -r; k <= r; k++) {
+        c.add(x + k, y, 0xfff6c0, 1 - Math.abs(k) / (r + 1))
+        c.add(x, y + k, 0xfff6c0, 1 - Math.abs(k) / (r + 1))
+      }
+    } else {
+      const before = prop(s, f, p - 0.06) ?? thing
+      const [dx, dy] = [x - before.x, y - before.y]
+
+      for (let k = 1; k <= 5; k++) c.add(x - (dx * k) / 3, y - (dy * k) / 3, 0xffe9a0, 0.7 - k * 0.12)
+      for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) c.put(x + ox, y + oy, GOLD_LIGHT)
+      c.put(x, y, WHITE)
+    }
+  } else if (a.kind === 'juggle') {
+    // A spinning gold token.
+    const w = Math.max(0.5, Math.abs(Math.cos(f.t * 0.6)) * 1.6)
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const d = (dx / w) ** 2 + (dy / 1.7) ** 2
+
+        if (d <= 1) c.put(x + dx, y + dy, d > 0.55 ? GOLD_DARK : dx < 0 && dy < 0 ? GOLD_LIGHT : GOLD)
+      }
+    }
+  }
 }
 
 // Moves the scene on one frame. Idle, only breath, blinks and glances; the chew,
@@ -410,17 +986,6 @@ export const step = (s: Scene, width: number, height: number) => {
     s.gazeUntil = s.tick + 15 + random() * 60
   }
 
-  const looking = s.tick - s.typedAt < 15 || s.tick - s.perkAt < PERK ? { x: 0, y: 0.9 } : s.gazeTo
-
-  s.gaze = { x: ease(s.gaze.x, looking.x, 0.35), y: ease(s.gaze.y, looking.y, 0.35) }
-
-  // Googly pupils chase the gaze on a spring, and every bounce jiggles them.
-  s.googlyV = {
-    x: (s.googlyV.x + (s.gaze.x - s.googly.x) * 0.25) * 0.72,
-    y: (s.googlyV.y + (s.gaze.y + 0.25 - s.googly.y) * 0.25 + s.squashV * 3) * 0.72,
-  }
-  s.googly = { x: clamp(s.googly.x + s.googlyV.x, -1, 1), y: clamp(s.googly.y + s.googlyV.y, -1, 1) }
-
   if (s.level > s.lastLevel) s.flashAt = s.tick
   s.lastLevel = s.level
   s.power += ((s.level > 0 ? 1 : 0) - s.power) * 0.08
@@ -431,6 +996,9 @@ export const step = (s: Scene, width: number, height: number) => {
   s.squash += s.squashV
 
   const f = shape(s, width, height)
+
+  live(s, f)
+
   const face = mood(s, f)
   const quick = face.eyes === 'open' && f.eating ? 0.6 : 0.25
 
@@ -438,6 +1006,17 @@ export const step = (s: Scene, width: number, height: number) => {
   s.open = ease(s.open, face.open, quick)
   s.smile = ease(s.smile, face.smile, 0.2)
   s.blush = ease(s.blush, face.blush, 0.1)
+
+  const looking = s.tick - s.typedAt < 15 || s.tick - s.perkAt < PERK ? { x: 0, y: 0.9 } : (glance(s, f) ?? s.gazeTo)
+
+  s.gaze = { x: ease(s.gaze.x, looking.x, 0.35), y: ease(s.gaze.y, looking.y, 0.35) }
+
+  // Googly pupils chase the gaze on a spring, and every bounce jiggles them.
+  s.googlyV = {
+    x: (s.googlyV.x + (s.gaze.x - s.googly.x) * 0.25) * 0.72,
+    y: (s.googlyV.y + (s.gaze.y + 0.25 - s.googly.y) * 0.25 + s.squashV * 3) * 0.72,
+  }
+  s.googly = { x: clamp(s.googly.x + s.googlyV.x, -1, 1), y: clamp(s.googly.y + s.googlyV.y, -1, 1) }
 
   // Each mote carries a share of its serving; more heat, more motes a frame.
   for (let budget = 1 + Math.round(s.heat * 5); budget > 0 && s.servings.length > 0; budget--) {
@@ -589,6 +1168,11 @@ export const step = (s: Scene, width: number, height: number) => {
     if (bit.kind === 'ember') {
       bit.vy -= 0.02
       bit.vx += (random() - 0.5) * 0.2
+    }
+
+    if (bit.kind === 'heart') {
+      bit.vx = bit.vx * 0.9 + Math.sin(bit.life * 0.3) * 0.04
+      bit.vy = ease(bit.vy, -0.28, 0.08)
     }
 
     if (bit.kind === 'firefly') {
@@ -1017,6 +1601,7 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
     const rest = { x: ax + side * length * 0.45, y: ay + length * 0.8 + Math.sin(f.wave + side) * 0.5 }
     const mouthSpot = { x: f.mouth.x + side * rx * 0.35, y: f.mouth.y + 1 }
     const up = { x: ax + side * length * 0.7, y: ay - length * 1.05 + Math.sin(t * 0.8 + side) * 0.8 }
+    const posed = pose(s, f, side, ax, ay, length, rest)
     let hand = rest
 
     if (f.cheering || (s.finish?.text === 'K.O.' && t - s.finish.at < 30)) hand = up
@@ -1026,7 +1611,8 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
       const scoop = Math.max(0, Math.sin(s.chew * 0.5 + (side > 0 ? Math.PI : 0)))
 
       hand = { x: ease(rest.x, mouthSpot.x, scoop), y: ease(rest.y, mouthSpot.y, scoop) }
-    } else if (f.typing || f.perking) {
+    } else if (posed !== null) hand = posed
+    else if (f.typing || f.perking) {
       const rub = Math.sin(t * 1.2) * side * 0.8
 
       hand = { x: cx + side * rx * 0.25 + rub, y: cy + ry * 0.6 }
@@ -1153,7 +1739,8 @@ const hair = (c: Canvas, { t, cx, cy, rx, ry, r0, power, level }: Shape) => {
 
 // One eye: white, an iris that looks where the monster looks, a pupil, two
 // catchlights, and a lid that closes from the top.
-const eye = (c: Canvas, x: number, y: number, r: number, look: { x: number; y: number }, lid: number, f: Shape, iris: number) => {
+// `big`: pleading, with wide pupils and a wet shine.
+const eye = (c: Canvas, x: number, y: number, r: number, look: { x: number; y: number }, lid: number, f: Shape, iris: number, big = false) => {
   const superEyes = f.power > 0.5
   const sclera = f.monster === 'ghost' ? 0x1a1030 : f.monster === 'gremlin' && !superEyes ? 0xffe14d : WHITE
 
@@ -1166,10 +1753,16 @@ const eye = (c: Canvas, x: number, y: number, r: number, look: { x: number; y: n
     }
   }
 
-  const ir = r * (f.monster === 'cookie' ? 0.58 : 0.62)
-  const [ix, iy] = [x + look.x * (r - ir - 0.4), y + look.y * (r - ir - 0.4)]
+  const ir = r * (f.monster === 'cookie' ? 0.58 : 0.62) * (big ? 1.2 : 1)
+  const [ix, iy] = [x + look.x * Math.max(0, r - ir - 0.4), y + look.y * Math.max(0, r - ir - 0.4)]
 
-  if (f.monster === 'gremlin' && !superEyes) {
+  if (big) {
+    // Wide, wet pupils and two big shines: the look that gets it fed.
+    c.disc(ix, iy, ir, f.monster === 'ghost' ? 0x8f9fff : INK)
+    c.disc(ix - ir * 0.35, iy - ir * 0.35, Math.max(0.7, ir * 0.38), WHITE)
+    c.put(ix + ir * 0.4, iy + ir * 0.35, WHITE)
+    for (let dx = -ir * 0.6; dx <= ir * 0.6; dx += 0.5) c.put(ix + dx, iy + ir * 0.75, 0x9fd8ff, 0.7)
+  } else if (f.monster === 'gremlin' && !superEyes) {
     for (let k = -ir; k <= ir; k += 0.5) c.put(ix, iy + k, INK)
   } else if (f.monster === 'cookie' && !superEyes) {
     // Googly: one solid black pupil with a shine.
@@ -1236,7 +1829,13 @@ const face = (c: Canvas, f: Shape, s: Scene) => {
         c.put(ex + Math.cos(angle) * rr, ey + Math.sin(angle) * rr, INK)
       }
     } else if (m.eyes === 'happy' || m.eyes === 'closed') {
-      // ^ ^ for joy, a sleepy curve for rest.
+      // ^ ^ for joy, a sleepy curve for rest. The cookie's eyes sit on top of its
+      // head, so they close as lidded balls; bare, the curve would vanish into the sky.
+      if (monster === 'cookie') {
+        c.disc(ex, ey, re, mix(body, INK, 0.6))
+        c.disc(ex, ey, re - 0.7, mix(body, WHITE, 0.15))
+      }
+
       for (let dx = -re; dx <= re; dx += 0.5) {
         const curve = (1 - (dx / re) ** 2) * re * 0.55
 
@@ -1253,7 +1852,7 @@ const face = (c: Canvas, f: Shape, s: Scene) => {
       c.line(ex - re * 0.8 * dir, ey - re * 0.6, ex + re * 0.6 * dir, ey, INK)
       c.line(ex + re * 0.6 * dir, ey, ex - re * 0.8 * dir, ey + re * 0.6, INK)
     } else {
-      eye(c, ex, ey, re, look, lid, f, iris)
+      eye(c, ex, ey, re, look, lid, f, iris, m.eyes === 'plead')
     }
 
     if (m.brows !== 'none' && side !== 0) {
@@ -1342,6 +1941,20 @@ const bits = (c: Canvas, s: Scene) => {
       const glow = 0.5 + 0.5 * Math.sin(bit.life * 0.3)
 
       c.add(bit.x, bit.y, bit.color, 0.9 * glow * Math.min(1, fade * 4))
+    } else if (bit.kind === 'heart') {
+      // Five wide while fresh, three as it fades.
+      const rows = bit.max >= 24 && fade > 0.35 ? ['.X.X.', 'XXXXX', '.XXX.', '..X..'] : ['X.X', 'XXX', '.X.']
+      const [x0, y0] = [Math.round(bit.x) - (rows[0]!.length >> 1), Math.round(bit.y) - 1]
+
+      rows.forEach((row, dy) =>
+        [...row].forEach((cell, dx) => {
+          if (cell !== 'X') return
+
+          const tone = dy === 0 || (dy === 1 && dx === 1) ? mix(bit.color, WHITE, 0.45) : dy === rows.length - 1 ? mix(bit.color, BLACK, 0.25) : bit.color
+
+          c.put(x0 + dx, y0 + dy, tone, Math.min(1, fade * 2.5))
+        }),
+      )
     } else {
       c.put(bit.x, bit.y, bit.color, bit.kind === 'crumb' ? Math.min(1, fade * 2) : 1)
     }
@@ -1372,6 +1985,7 @@ const GLYPHS: Record<string, number[]> = {
   T: [7, 2, 2, 2, 2],
   U: [5, 5, 5, 5, 7],
   '.': [0, 0, 0, 0, 2],
+  '?': [7, 1, 3, 0, 2],
   ' ': [0, 0, 0, 0, 0],
 }
 
@@ -1428,7 +2042,9 @@ export const paint = (s: Scene, width: number, height: number): Uint32Array => {
   blaze(c, f, true)
   helpers(c, f, s.minions)
   hair(c, f)
-  face(c, f, s)
+  // Mid spin, its back is to you.
+  if (!f.back) face(c, f, s)
+  antics(c, s, f)
 
   for (const mote of s.motes) {
     c.put(mote.px, mote.py, mote.color, 0.4)

@@ -24,13 +24,15 @@ import {
   lively,
   paint,
   perk,
+  pet,
   serve,
   settle,
   startTurn,
   step,
   toolColor,
+  typed,
 } from './paint'
-import type { Scene } from './paint'
+import type { Fuss, Scene } from './paint'
 
 const FPS = 10
 const BAR = 20
@@ -131,6 +133,8 @@ const combo = atom({ plugin: 'token-monster', key: 'combo' } as const, 0)
 const slices = atom({ plugin: 'token-monster', key: 'slices' } as const, [])
 // Which view the pane shows; the diet module draws 'diet' (see hooks/diet.tsx).
 const view = atom({ plugin: 'token-monster', key: 'view' } as const, 'monster')
+// What it says back for a few seconds when you pet it or come back, over its mood line.
+const chat = atom({ plugin: 'token-monster', key: 'chat' } as const, null)
 
 // What the sprite animates from. The readout draws from the atoms above, save the
 // helper count, which only ever changes together with `level`.
@@ -368,6 +372,32 @@ const rally = async ($: EngineInterface, isListed = false) => {
   }
 }
 
+// Its answer to a pet, by how it took it; each pet says the next line.
+const FUSSES: Record<Fuss, { eye: string; lines: string[] }> = {
+  purr: { eye: '^', lines: ['hehe, that tickles', '*purr*', 'more pets pls'] },
+  wiggle: { eye: '^', lines: ['*purrrr* me like you', 'hehe! again!', 'best human'] },
+  spin: { eye: '^', lines: ['wheee! me LOVE you', '*happy spin*', 'best human EVER'] },
+  stir: { eye: '-', lines: ['mmm... *purr*... zzz', '*smiles in its sleep*'] },
+  plead: { eye: 'o', lines: ['pets nice... but me so hungry', 'feed me tokens? pleeease'] },
+}
+const SAYING = 4000
+
+let petted = 0
+let hush: Timer | undefined
+
+const reply = async ($: EngineInterface, eye: string, words: string) => {
+  await update($, chat, () => ({ eye, say: words }))
+  hush?.cancel()
+  hush = $.clock.after(SAYING, () => void update($, chat, () => null))
+}
+
+const stroke = async ($: EngineInterface) => {
+  const { eye, lines } = FUSSES[pet(scene, await $.clock.now())]
+
+  petted += 1
+  await reply($, eye, lines[petted % lines.length]!)
+}
+
 const restyle = async ($: EngineInterface, change: (current: Look) => Look) => {
   scene.look = await update($, look, change)
   await $.store.set('look', scene.look)
@@ -494,8 +524,9 @@ export const register: Register = on => {
 
   registerDiet(on)
 
-  on('prompt.edit', ($, e, next) => {
-    scene.typedAt = scene.tick
+  on('prompt.edit', async ($, e, next) => {
+    // Back after a long quiet: it waves hello before it rubs its hands.
+    if (typed(scene)) await reply($, '^', 'oh hi! you back!')
     serve(scene, 2, PROMPT, false)
 
     return next(e)
@@ -652,7 +683,8 @@ export const register: Register = on => {
     const helpers = scene.minions
     const hits = await read($, combo)
     // About to burst outranks super mode: that line is the /compact warning.
-    const { eye, say } = voice(full, at, power, helpers)
+    // What it said back to a pet or a hello shows for a moment, over its mood.
+    const { eye, say } = (await read($, chat)) ?? voice(full, at, power, helpers)
     const chain = onFire(hits)
     // The sprite takes up to 64 columns; the readout stays a 48 column block under it.
     const wide = Math.max(16, Math.min(64, e.props.bodyColumns))
@@ -778,6 +810,8 @@ export const register: Register = on => {
             {/* diet.tsx answers this press: onPress cannot call into it, as the engine
                 refuses $ passed across an import. */}
             <Button key="diet" label="Diet: free context" hotkey="d" plain onPress={() => undefined} />
+            <Text>  </Text>
+            <Button key="pet" label="Pet" hotkey="p" plain onPress={() => stroke($)} />
           </Box>
           {!e.props.isFocused && <Text dimColor>ctrl+x tab or a click gives me the keys</Text>}
         </Box>

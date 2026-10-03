@@ -36,6 +36,7 @@ declare module 'claude-code' {
       slices: Slice[]
       level: number
       combo: number
+      chat: { eye: string; say: string } | null
     }
   }
 }

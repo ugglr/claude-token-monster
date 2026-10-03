@@ -20,6 +20,8 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | **Hand on its chin** | Claude is thinking, and nothing has streamed yet. |
 | **On fire** | A combo: tool calls landing back to back. From the second, flames engulf it, climbing higher and hotter with every hit and throwing embers. A turn that landed three or more ends in a **K.O.** with confetti; a failed tool call makes it flinch, with a **COUNTER**. |
 | **A happy hop** | A turn finished. Sparkles. |
+| **Little antics** | Nothing is happening right now. Every 15 to 45 seconds it does something small: stretches, scratches its side, looks around and shrugs, waves at you, chases a butterfly by day or a firefly by night, juggles a token and eats it, hops, peeks at the readout, or tries to catch a falling star. It stops the moment anything happens. |
+| **A wave hello** | You started typing after two quiet minutes. |
 | **A yawn, then sleep** | Nothing has happened for three minutes and it is well fed. It wakes when you start typing. |
 | **The sky** | Your local time: dawn, day with drifting clouds, dusk, and night with the moon, stars, the odd shooting star and fireflies. |
 | **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 is over 9000. Each subagent shows up as a little helper in its own color that dances beside it and runs over now and then to toss a token into its mouth. A belly about to burst or a limit past 80% still shows through. |
@@ -32,10 +34,18 @@ om nom nom nom
 belly   ████████████░░░░░░░░  62% 124k/200k
 session ███████░░░░░░░░░░░░░  35% 2h14m
 weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
-[Monster] [Color] [Diet: free context]
+m: Monster  c: Color  d: Diet: free context  p: Pet
 ```
 
 ![Every monster and mood](media/moods.png)
+
+## Pet it
+
+Press `p` in the pane to pet the monster. Hearts float up, it blushes, squeezes its eyes shut and wiggles, and says something back under the picture. Pet it a few times in a row and it gets fonder, up to a happy spin; the fondness fades over a few minutes. Pet it while it sleeps and it smiles without waking. Pet it while it is starving and it gives you a pleading look.
+
+![Petting each monster: a purr, a wiggle, a spin, a sleepy smile and a pleading look](media/pet.gif)
+
+![Idle antics: catching a falling star, chasing a butterfly, juggling a token, a shrug, a stretch and more](media/antics.gif)
 
 ## Put it on a diet
 
@@ -91,7 +101,7 @@ claude plugin uninstall token-monster@token-monster
 
 The pane opens by itself when the terminal is at least 144 columns wide. At any width, run `/token-monster`. In fullscreen it docks beside the transcript; otherwise it sits above the prompt.
 
-Focus the pane with `ctrl+x tab`, then press `m` to swap the monster, `c` to swap the color, and `d` for the diet. `ctrl+x x` closes the pane. Or name them:
+Focus the pane with `ctrl+x tab`, then press `m` to swap the monster, `c` to swap the color, `d` for the diet, and `p` to pet it. `ctrl+x x` closes the pane. Or name them:
 
 ```
 /token-monster slime green
@@ -143,8 +153,8 @@ It stores only your monster and color choice, and sends nothing anywhere: there 
 - A diet meal rebuilds each message that held an eaten result from its text, joining text blocks, and the next turn reads the context uncached once.
 - The band above the prompt is shared: when another mod draws there, only one of them shows.
 - Combos break after a 4 second pause. The sky goes by the clock of the machine Claude Code runs on. Super mode counts running subagents from the agent list, so it can take a moment to power down after a background agent finishes.
-- The animation and combo state live in memory and start over when the mod reloads; your monster and color are kept.
-- Tested with 34 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
+- The animation, combo and fondness state live in memory and start over when the mod reloads; your monster and color are kept. The antics and the hello only run while the pixel art is drawing.
+- Tested with 40 tests run by `claude plugin test`, and live in one long session, including a real diet meal. The animation is checked frame by frame from rendered stills and the demo above, not by tests.
 
 ## Dependencies
 
