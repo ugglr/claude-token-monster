@@ -118,6 +118,8 @@ const createScene = (look) => ({
   blush: 0,
   power: 0,
   frenzy: 0,
+  ended: "quiet",
+  typedMs: -Infinity,
   combo: 0,
   best: 0,
   comboAt: -100,
@@ -171,6 +173,7 @@ const startTurn = (s) => {
   s.activeAt = s.tick;
 };
 const finishTurn = (s, isAborted = false) => {
+  s.ended = isAborted ? "quiet" : s.best >= 3 ? "ko" : "cheer";
   if (!isAborted) {
     if (s.best >= 3) s.finish = { text: "K.O.", at: s.tick };
     s.cheerAt = s.tick;
@@ -181,6 +184,7 @@ const finishTurn = (s, isAborted = false) => {
   s.best = 0;
   s.activeAt = s.tick;
 };
+const asleep = (s) => !s.busy && s.heat <= 0.02 && s.tick - s.activeAt > DOZE && (s.belly === null || s.at - s.belly.fedAt < SAD);
 const levelUp = (s, rank) => {
   if (s.rank > 0 && rank > s.rank) {
     s.rankUpAt = s.tick;
@@ -218,7 +222,7 @@ const shape = (s, width, height) => {
   const eating = s.heat > 0.02;
   const quiet = t - s.activeAt;
   const hungry = idle >= SAD;
-  const sleeping = !s.busy && !eating && quiet > DOZE && !hungry;
+  const sleeping = asleep(s);
   const yawning = !s.busy && !eating && quiet > DOZE - YAWN && !sleeping && !hungry;
   const floor = height - 4;
   const tight = 1 - s.power * 0.18;
@@ -354,14 +358,14 @@ const LULL_MORE = 300;
 const HEART = 16732027;
 const fondness = (s, at) => s.affection * 0.5 ** (Math.max(0, at - s.lovedAt) / (2 * MINUTE));
 const pet = (s, at) => {
-  const asleep = !s.busy && s.heat <= 0.02 && s.tick - s.activeAt > DOZE;
+  const dozing = asleep(s);
   const starving = s.belly !== null && at - s.belly.fedAt >= STARVING;
   s.affection = Math.min(6, fondness(s, at) + 1);
   s.lovedAt = at;
   s.petAt = s.tick;
-  s.fuss = asleep ? "stir" : starving ? "plead" : s.affection > 3.5 ? "spin" : s.affection > 1.5 ? "wiggle" : "purr";
+  s.fuss = dozing ? "stir" : starving ? "plead" : s.affection > 3.5 ? "spin" : s.affection > 1.5 ? "wiggle" : "purr";
   s.antic = null;
-  if (!asleep) s.activeAt = s.tick;
+  if (!dozing) s.activeAt = s.tick;
   return s.fuss;
 };
 const typed = (s) => {
@@ -716,7 +720,7 @@ const step = (s, width, height) => {
   if (s.level > s.lastLevel) s.flashAt = s.tick;
   s.lastLevel = s.level;
   s.power += ((s.level > 0 ? 1 : 0) - s.power) * 0.08;
-  const goal = clamp((s.heat - 0.55) / 0.35) * clamp(0.45 + s.level * 0.2 + (s.combo >= 3 ? 0.15 : 0));
+  const goal = s.level > 0 ? clamp((s.heat - 0.8) / 0.2) * clamp(0.4 + s.level * 0.2 + (s.combo >= 3 ? 0.15 : 0)) : 0;
   s.frenzy += (goal - s.frenzy) * (goal > s.frenzy ? 0.15 : 0.04);
   if (s.tick - s.cheerAt === HOP) s.squashV += 0.14;
   const grown = s.tick - s.rankUpAt;
@@ -1513,13 +1517,10 @@ const GLYPHS = {
   V: [5, 5, 5, 5, 2],
   v: [0, 0, 5, 5, 2],
   E: [7, 4, 7, 4, 7],
-  H: [5, 5, 7, 5, 5],
-  I: [7, 2, 2, 2, 7],
   K: [5, 5, 6, 5, 5],
   N: [6, 5, 5, 5, 5],
   O: [7, 5, 5, 5, 7],
   R: [7, 5, 6, 5, 5],
-  S: [7, 4, 7, 1, 7],
   T: [7, 2, 2, 2, 2],
   U: [5, 5, 5, 5, 7],
   ".": [0, 0, 0, 0, 2],
@@ -1558,12 +1559,13 @@ const hud = (c, s) => {
   }
 };
 const WARDROBE = [
-  { level: 3, part: "a bow tie" },
-  { level: 6, part: "a propeller cap" },
-  { level: 10, part: "a crown" },
-  { level: 15, part: "a cape" },
-  { level: 25, part: "a halo" }
+  { level: 3, key: "bow", part: "a bow tie" },
+  { level: 6, key: "cap", part: "a propeller cap" },
+  { level: 10, key: "crown", part: "a crown" },
+  { level: 15, key: "cape", part: "a cape" },
+  { level: 25, key: "halo", part: "a halo" }
 ];
+const UNLOCK = Object.fromEntries(WARDROBE.map((one) => [one.key, one.level]));
 const eyeSize = ({ r0, monster }) => Math.max(2, r0 * (monster === "slime" ? 0.42 : monster === "cookie" ? 0.34 : 0.26));
 const sprite = (c, rows, x, y, colors) => {
   const [w, h] = [rows[0].length, rows.length];
@@ -1638,9 +1640,9 @@ const halo = (c, x, y, rx, t) => {
 const wear = (c, f, back) => {
   const { rank, rx, ry, cx, cy, t, monster } = f;
   const size = f.r0 >= 11.5 ? "big" : "small";
-  if (rank < 3) return;
+  if (rank < UNLOCK.bow) return;
   if (back) {
-    if (rank >= 15) cape(c, f);
+    if (rank >= UNLOCK.cape) cape(c, f);
     return;
   }
   if (!f.back) {
@@ -1654,18 +1656,18 @@ const wear = (c, f, back) => {
   }
   const head = headTop(f);
   let crest = head.y;
-  if (rank >= 10) {
+  if (rank >= UNLOCK.crown) {
     sprite(c, CROWN[size], head.x, head.y, { W: 16775400, L: GOLD_LIGHT, G: GOLD, D: 13076992, R: 16726876, B: 4037631 });
     crest -= CROWN[size].length;
     const glint = t % 70;
     if (glint < 6) c.add(head.x - rx * 0.4 + glint * 1.2, head.y - 1, WHITE, 0.9);
-  } else if (rank >= 6) {
+  } else if (rank >= UNLOCK.cap) {
     sprite(c, CAP[size], head.x, head.y, { R: 15749180, r: 12070954, Y: 16765503, y: 13146650, B: 4029439, b: 2773176, W: 16756896 });
     crest -= CAP[size].length + 1;
     propeller(c, Math.round(head.x), Math.round(crest), f, size === "big" ? 4 : 3);
     crest -= 1;
   }
-  if (rank >= 25) halo(c, head.x, crest - 3, Math.max(3, rx * 0.45), t);
+  if (rank >= UNLOCK.halo) halo(c, head.x, crest - 3, Math.max(3, rx * 0.45), t);
 };
 const eggOf = (f) => {
   const e = f.egg;
@@ -1686,7 +1688,7 @@ const egg = (c, f, half = false) => {
     const side = Math.abs(u);
     const k = CRACK.findIndex(([x]) => x >= side);
     const [a, b] = [CRACK[Math.max(0, k - 1)], CRACK[Math.max(0, k)]];
-    return a[1] + (b[1] - a[1]) * ((side - a[0]) / Math.max(0.01, b[0] - a[0])) * (u < 0 ? 1 : 1);
+    return a[1] + (b[1] - a[1]) * ((side - a[0]) / Math.max(0.01, b[0] - a[0]));
   };
   const inside = (nx, ny) => {
     const [px, py] = [nx * g.rx, ny * g.ry - g.ry];
@@ -1894,6 +1896,7 @@ export {
   TEXT,
   THINKING,
   WARDROBE,
+  asleep,
   createScene,
   encode,
   finishTurn,
