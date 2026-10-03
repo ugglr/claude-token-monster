@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, SessionMessage } from 'claude-code'
 
+
 import type { Dish } from '../types'
 import { kilo } from './format'
 
@@ -10,7 +11,12 @@ import { kilo } from './format'
 // Eat only arms it. A plugin's own $.session.compact() skips that plugin's hooks,
 // so the diet could not answer it and core would summarize everything instead.
 // The person's next /compact is answered here, with the armed results eaten.
-export const DIET = 'token-monster-diet'
+// The diet is a view inside the monster's pane, never a pane of its own: a mod
+// cannot switch the person back to another tab, so a second pane traps them.
+// Its hooks sit outside the monster's on the same pane and pass when `view` is
+// not 'diet'. Earlier versions opened a pane under this id; session.start closes it.
+export const OLD_DIET = 'token-monster-diet'
+const PANE = 'token-monster'
 
 // Nine, so each has a digit to press.
 const COURSES = 9
@@ -21,6 +27,9 @@ const LABELS = ['file_path', 'description', 'url', 'pattern', 'query', 'command'
 const menu = atom({ plugin: 'token-monster', key: 'menu' } as const, [])
 const picked = atom({ plugin: 'token-monster', key: 'picked' } as const, [])
 const armed = atom({ plugin: 'token-monster', key: 'armed' } as const, [])
+// The armed results' tokens, roughly: what the next /compact takes out of the context.
+const serving = atom({ plugin: 'token-monster', key: 'serving' } as const, 0)
+const view = atom({ plugin: 'token-monster', key: 'view' } as const, 'monster')
 // The monster's own reading of the context, for the before and after.
 const belly = atom({ plugin: 'token-monster', key: 'belly' } as const, null)
 
@@ -94,6 +103,15 @@ const fill = async ($: EngineInterface) => {
   await update($, picked, () => [])
 }
 
+const showDiet = async ($: EngineInterface) => {
+  await fill($)
+  await update($, view, () => 'diet')
+}
+
+const hideDiet = async ($: EngineInterface) => {
+  await update($, view, () => 'monster')
+}
+
 const pick = (id: string) => (ids: string[]) => (ids.includes(id) ? ids.filter(one => one !== id) : [...ids, id])
 
 const arm = async ($: EngineInterface) => {
@@ -101,36 +119,35 @@ const arm = async ($: EngineInterface) => {
 
   if (chosen.length === 0) return
 
+  const tokens = (await read($, menu)).filter(dish => chosen.includes(dish.id)).reduce((sum, dish) => sum + dish.tokens, 0)
+
   await update($, armed, () => chosen)
+  await update($, serving, () => tokens)
 
   const { isFilled } = await $.prompt.fill({ text: '/compact' })
 
-  // The next step is the prompt, and the main readout says it is armed.
-  await $.ui.close({ id: DIET })
+  // The next step is the prompt, and the monster's readout says it is armed.
+  await hideDiet($)
 
-  $.ui.toast(
-    `${isFilled ? 'Press Enter on /compact' : 'Run /compact'} and me eat ${chosen.length} from this conversation's context.`,
-  )
+  $.ui.toast(`${isFilled ? 'Press Enter on /compact' : 'Run /compact'} and me eat ~${kilo(tokens)} tokens from the context.`)
 }
 
 const disarm = async ($: EngineInterface) => {
   await update($, armed, () => [])
+  await update($, serving, () => 0)
 }
 
 export const registerDiet = (on: On) => {
-  on('ui.open', async ($, e, next) => {
-    if (e.id === DIET) await fill($)
-
-    return next(e)
-  })
-
   // Only the person's /compact eats: an automatic one needs the room a summary makes.
   on('session.compact', { trigger: 'manual' }, async ($, e, next) => {
+    // Whatever the /compact does, the pane goes back to the monster to watch it.
+    if (e.agentId === undefined) await hideDiet($)
+
     const ids = await read($, armed)
 
     if (ids.length === 0 || e.agentId !== undefined) return next(e)
 
-    await update($, armed, () => [])
+    await disarm($)
     await update($, picked, () => [])
 
     if (!Array.isArray(e.messages) || e.messages.length === 0) return { skip: 'me could not see the conversation' }
@@ -144,15 +161,42 @@ export const registerDiet = (on: On) => {
 
     await update($, menu, dishes => dishes.filter(dish => !meal.has(dish.id)))
 
+    const eaten = e.messages
+      .flatMap(message => message.toolResults ?? [])
+      .filter(result => meal.has(result.tool_use_id))
+      .reduce((sum, result) => sum + estimate(result.text), 0)
+
+    $.ui.toast(`Me eating ~${kilo(eaten)} tokens from the context. *burp*`)
+
     return { messages: stubbed(e.messages, meal) }
   })
 
-  on('ui.render', { component: 'Pane', requestId: DIET }, async ($, e) => {
+  // `diet` is this module's word; the monster's command passes it down here.
+  on('command.run', { command: 'token-monster' }, async ($, e, next) => {
+    if (e.args.trim().toLowerCase() !== 'diet') return next(e)
+
+    await showDiet($)
+    await $.ui.open({ id: PANE, title: 'Token Monster', columns: 46, focus: true })
+
+    return { text: 'Pick what Token Monster eats.' }
+  })
+
+  on('ui.press', async ($, e, next) => {
+    if (e.plugin === 'token-monster' && e.element === 'diet') await fill($)
+
+    return next(e)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if ((await read($, view)) !== 'diet') return next(e)
+
     const { Box, Button, Text } = $.ui.resolve(e)
+    const { bodyColumns, isFocused } = e.props
     const dishes = await read($, menu)
     const ids = await read($, picked)
     const ready = await read($, armed)
-    const room = Math.max(12, e.props.bodyColumns - 2)
+    const plate = await read($, serving)
+    const room = Math.max(12, bodyColumns - 2)
     const chosen = dishes.filter(dish => ids.includes(dish.id))
     const saving = chosen.reduce((sum, dish) => sum + dish.tokens, 0)
     const full = await read($, belly)
@@ -171,10 +215,10 @@ export const registerDiet = (on: On) => {
           context {now}
           {after}
         </Text>
-        {!e.props.isFocused && <Text dimColor>ctrl+x tab for the keys, ctrl+x x to close</Text>}
+        {!isFocused && <Text dimColor>ctrl+x tab or a click gives me the keys</Text>}
         {ready.length > 0 && (
           <Box>
-            <Text color="yellow">Armed: me eat {ready.length} on your next /compact </Text>
+            <Text color="yellow">Armed: eating ~{kilo(plate)} tokens from the context on your next /compact </Text>
             <Button key="cancel" label="Cancel" hotkey="x" onPress={() => disarm($)} />
           </Box>
         )}
@@ -205,9 +249,9 @@ export const registerDiet = (on: On) => {
           <Text> </Text>
           <Button key="refresh" label="Refresh" hotkey="r" onPress={() => fill($)} />
           <Text> </Text>
-          <Button key="close" label="Close" hotkey="q" role="dismiss" onPress={() => $.ui.close({ id: DIET })} />
+          <Button key="back" label="Back" hotkey="q" onPress={() => hideDiet($)} />
         </Box>
-        <Text dimColor>1-9 pick, e eat, q close. Eat puts /compact in your prompt; Enter removes them from the context, each left as a short note.</Text>
+        <Text dimColor>1-9 pick, e eat, q back to the monster. Eat puts /compact in your prompt; Enter removes them from the context, each left as a short note.</Text>
       </Box>
     )
   })

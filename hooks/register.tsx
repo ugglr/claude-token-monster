@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage, Timer } from 'claude-code'
 
 import type { Belly, Limit, Look } from '../types'
-import { DIET, label, registerDiet } from './diet'
+import { OLD_DIET, label, registerDiet } from './diet'
 import { kilo } from './format'
 import { AMBER, BURP, MINUTE, PALETTE, RED, SAD, STARVING, encode, paint, step } from './paint'
 import type { Scene } from './paint'
@@ -97,6 +97,9 @@ const pantry = atom({ plugin: 'token-monster', key: 'pantry' } as const, [])
 const doing = atom({ plugin: 'token-monster', key: 'doing' } as const, '')
 // The diet's own value, read here for the readout; the state scan wants each atom in its file.
 const armed = atom({ plugin: 'token-monster', key: 'armed' } as const, [])
+// Which view the pane shows; the diet module draws 'diet' (see hooks/diet.tsx).
+const serving = atom({ plugin: 'token-monster', key: 'serving' } as const, 0)
+const view = atom({ plugin: 'token-monster', key: 'view' } as const, 'monster')
 
 // What the sprite animates from; the atoms above are what the readout draws.
 const scene: Scene = {
@@ -283,19 +286,17 @@ export const register: Register = on => {
       description: 'Open the Token Monster pane, swap its monster and color, or put it on a diet',
       argumentHint: `[${NAMES.join('|')}] [color] | diet`,
     })
+    await update($, view, () => 'monster')
+    await $.ui.close({ id: OLD_DIET })
     void $.ui.open({ id: PANE, title: 'Token Monster', columns: 46 })
 
     return next(e)
   })
 
-  on('command.run', { command: 'token-monster' }, async ($, e) => {
+  on('command.run', { command: 'token-monster' }, async ($, e, next) => {
     const words = e.args.toLowerCase().split(/\s+/).filter(Boolean)
 
-    if (words[0] === 'diet') {
-      await $.ui.open({ id: DIET, title: 'Diet', columns: 48, focus: true, closeOnEscape: true })
-
-      return { text: 'Pick what Token Monster eats.' }
-    }
+    if (words[0] === 'diet') return next(e)
 
     const unknown = words.filter(word => !NAMES.includes(word) && !COLORS.includes(word))
 
@@ -309,7 +310,8 @@ export const register: Register = on => {
       monster: words.find(word => NAMES.includes(word)) ?? current.monster,
       color: words.find(word => COLORS.includes(word)) ?? current.color,
     }))
-    await $.ui.open({ id: PANE, title: 'Token Monster', columns: 46 })
+    await update($, view, () => 'monster')
+    await $.ui.open({ id: PANE, title: 'Token Monster', columns: 46, focus: true })
 
     return { text: 'Token Monster is hungry.' }
   })
@@ -393,12 +395,14 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const elements = $.ui.resolve(e)
+
     const { Box, Button, Text } = elements
     const at = await read($, now)
     const full = (await read($, belly)) ?? { percent: 0, tokens: 0, window: 0, ate: 0, fedAt: at, burpAt: null, known: false }
     const limits = await read($, pantry)
     const activity = await read($, doing)
     const dieting = (await read($, armed)).length
+    const plate = await read($, serving)
     const { monster, color } = await read($, look)
     const { eye, say } = feeling(full, at)
     const columns = Math.max(16, Math.min(48, e.props.bodyColumns))
@@ -463,7 +467,7 @@ export const register: Register = on => {
           ),
         )}
         {remark !== undefined && <Text dimColor>{remark}</Text>}
-        {dieting > 0 && <Text color="yellow">diet armed: your next /compact eats {dieting}</Text>}
+        {dieting > 0 && <Text color="yellow">eating ~{kilo(plate)} tokens from the context on your next /compact</Text>}
         <Box>
           <Button
             key="monster"
@@ -479,7 +483,7 @@ export const register: Register = on => {
             onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
           />
           <Text> </Text>
-          <Button key="diet" label="Diet: free context" hotkey="d" onPress={() => $.ui.open({ id: DIET, title: 'Diet', columns: 48, focus: true, closeOnEscape: true })} />
+          <Button key="diet" label="Diet: free context" hotkey="d" onPress={() => update($, view, () => 'diet')} />
         </Box>
       </Box>
     )

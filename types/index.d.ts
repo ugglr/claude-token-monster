@@ -24,6 +24,8 @@ declare module 'claude-code' {
       menu: Dish[]
       picked: string[]
       armed: string[]
+      serving: number
+      view: string
     }
   }
 }

@@ -49,8 +49,8 @@ const mountDiet = ($: Engine, surface: 'terminal' | 'desktop') =>
     plugin: 'token-monster',
     surface,
     component: 'Pane',
-    requestId: 'token-monster-diet',
-    props: { title: 'Diet', isFocused: true, bodyColumns: 48, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+    requestId: 'token-monster',
+    props: { title: 'Token Monster', isFocused: true, bodyColumns: 48, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
   })
 
 const openDiet = ($: Engine) =>
@@ -114,15 +114,10 @@ test('withMedia finds the results that sit beside an image or a document', () =>
 
 const arm = async ($: Engine, on: On, hasClock = true) => {
   const said: string[] = []
-  const closed: string[] = []
 
   menu(on, API, hasClock)
   on('prompt.fill', () => ({ isFilled: true }))
-  on('ui.close', (_, e) => {
-    closed.push(e.id)
-
-    return { value: undefined } as never
-  })
+  on('ui.close', () => ({ value: undefined }) as never)
   on('ui.toast', (_, e) => {
     said.push(e.text)
 
@@ -135,7 +130,7 @@ const arm = async ($: Engine, on: On, hasClock = true) => {
   await ui.press({ key: 'dish-0' })
   await ui.press({ key: 'eat' })
 
-  return { ui, said, closed }
+  return { ui, said }
 }
 
 const core = (on: On) => {
@@ -152,18 +147,19 @@ const core = (on: On) => {
 
 test('Eat arms the diet and puts /compact in the prompt; your /compact eats only the picked results', async ($, on) => {
   const calls = core(on)
-  const { ui, said, closed } = await arm($, on)
+  const { ui, said } = await arm($, on)
 
-  expect(said).toEqual(["Press Enter on /compact and me eat 1 from this conversation's context."])
-  expect(closed).toEqual(['token-monster-diet'])
-  expect(await ui.find({ type: 'Text', text: /^Armed: me eat 1 on your next \/compact/ })).toBeDefined()
+  expect(said).toEqual(['Press Enter on /compact and me eat ~10k tokens from the context.'])
+  expect(await ui.find({ key: 'dish-0' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'eating ~10k tokens from the context on your next /compact' })).toBeDefined()
 
   const done = await $.session.compact({ trigger: 'manual', messages: ROWS })
 
   expect(calls.summarized).toBe(0)
+  expect(said.at(-1)).toBe('Me eating ~10k tokens from the context. *burp*')
   expect(done.messages?.[1]).toEqual(ROWS[1])
   expect(done.messages?.[2]?.toolResults?.[0]?.text).toMatch(/^\[Token Monster ate this Read result/)
-  expect(await ui.find({ type: 'Text', text: /^Armed/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^eating ~/ })).toBeUndefined()
 
   await $.session.compact({ trigger: 'manual', messages: ROWS })
   expect(calls.summarized).toBe(1)
@@ -176,6 +172,7 @@ test('an armed diet leaves automatic compaction and Cancel leaves /compact alone
   await $.session.compact({ trigger: 'auto', messages: ROWS })
   expect(calls.summarized).toBe(1)
 
+  await ui.press({ key: 'diet' })
   await ui.press({ key: 'cancel' })
   await $.session.compact({ trigger: 'manual', messages: ROWS })
   expect(calls.summarized).toBe(2)
@@ -193,17 +190,36 @@ test('an armed /compact after the armed results are gone is an ordinary /compact
 })
 
 test('the main readout says when the diet is armed', async ($, on) => {
-  await arm($, on)
+  const { ui } = await arm($, on)
 
-  const main = await $.ui.mount({
-    plugin: 'token-monster',
-    surface: 'desktop',
-    component: 'Pane',
-    requestId: 'token-monster',
-    props: { title: 'Token Monster', isFocused: false, bodyColumns: 46, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
-  })
+  expect(await ui.find({ type: 'Text', text: 'eating ~10k tokens from the context on your next /compact' })).toBeDefined()
+})
 
-  expect(await main.find({ type: 'Text', text: 'diet armed: your next /compact eats 1' })).toBeDefined()
+test('any /compact sends the pane back to the monster', async ($, on) => {
+  core(on)
+  menu(on)
+  await openDiet($)
+
+  const ui = await mountDiet($, 'desktop')
+
+  expect(await ui.find({ key: 'dish-0' })).toBeDefined()
+  await $.session.compact({ trigger: 'manual', messages: ROWS })
+  expect(await ui.find({ key: 'dish-0' })).toBeUndefined()
+  expect(await ui.find({ key: 'monster' })).toBeDefined()
+})
+
+test('Back and the Diet button switch views in the one pane', async ($, on) => {
+  menu(on)
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+
+  const ui = await mountDiet($, 'desktop')
+
+  await ui.press({ key: 'diet' })
+  expect((await ui.find({ key: 'dish-0' }))?.text).toMatch(/Read src\/huge.ts/)
+
+  await ui.press({ key: 'back' })
+  expect(await ui.find({ key: 'dish-0' })).toBeUndefined()
+  expect(await ui.find({ key: 'monster' })).toBeDefined()
 })
 
 test('a burp that fails never costs the meal', async ($, on) => {
