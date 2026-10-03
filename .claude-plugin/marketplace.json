@@ -1,0 +1,11 @@
+{
+  "name": "token-monster",
+  "owner": { "name": "Carl Igelström" },
+  "plugins": [
+    {
+      "name": "token-monster",
+      "source": "./",
+      "description": "A monster in a side pane that eats tokens and shows how full the context is"
+    }
+  ]
+}
