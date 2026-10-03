@@ -27,14 +27,14 @@ om nom nom nom
 belly   ████████████░░░░░░░░  62% 124k/200k
 session ███████░░░░░░░░░░░░░  35% 2h14m
 weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
-[Monster] [Color] [Diet]
+[Monster] [Color] [Diet: free context]
 ```
 
 ![Every monster and mood](media/moods.png)
 
 ## Put it on a diet
 
-Today you can only `/clear` or `/compact` the whole conversation. The diet lets you pick what goes. Press `d` in the pane, or run `/token-monster diet`, to list the biggest tool results in the conversation (file reads, command output, web pages). Tick the ones you no longer need and press **Eat**.
+Today you can only `/clear` or `/compact` the whole conversation. The diet lets you pick what goes. Press `d` in the pane, or run `/token-monster diet`, to list the biggest tool results sitting in this conversation's context right now (file reads, command output, web pages), with the context fill and where it would land after eating. Press `1` to `9` to tick the ones you no longer need, then `e` to **Eat**, or `q` to close.
 
 Eat arms the diet and puts `/compact` in your prompt. Press Enter, and instead of summarizing the conversation, Token Monster replaces each picked result with a short note, so the model knows something was there and can run the tool again if it needs it. **Cancel** in the pane disarms it, and an automatic compaction is never touched. If the picked results are already gone (an earlier compaction or `/clear` took them), the diet disarms and your `/compact` summarizes as usual.
 
@@ -60,7 +60,7 @@ claude --plugin-dir ./claude-token-monster
 
 The pane opens by itself when the terminal is at least 144 columns wide. At any width, run `/token-monster`. In fullscreen it docks beside the transcript; otherwise it sits above the prompt.
 
-Focus the pane with `ctrl+x tab`, then press `m` to swap the monster, `c` to swap the color, and `d` for the diet. Or name them:
+Focus the pane with `ctrl+x tab`, then press `m` to swap the monster, `c` to swap the color, and `d` for the diet. Click a tab to switch panes, and `ctrl+x x` closes one. Or name them:
 
 ```
 /token-monster slime green

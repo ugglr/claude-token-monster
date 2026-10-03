@@ -479,7 +479,7 @@ export const register: Register = on => {
             onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
           />
           <Text> </Text>
-          <Button key="diet" label="Diet" hotkey="d" onPress={() => $.ui.open({ id: DIET, title: 'Diet', columns: 48, focus: true, closeOnEscape: true })} />
+          <Button key="diet" label="Diet: free context" hotkey="d" onPress={() => $.ui.open({ id: DIET, title: 'Diet', columns: 48, focus: true, closeOnEscape: true })} />
         </Box>
       </Box>
     )

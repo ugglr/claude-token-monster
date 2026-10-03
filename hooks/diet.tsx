@@ -21,6 +21,8 @@ const LABELS = ['file_path', 'description', 'url', 'pattern', 'query', 'command'
 const menu = atom({ plugin: 'token-monster', key: 'menu' } as const, [])
 const picked = atom({ plugin: 'token-monster', key: 'picked' } as const, [])
 const armed = atom({ plugin: 'token-monster', key: 'armed' } as const, [])
+// The monster's own reading of the context, for the before and after.
+const belly = atom({ plugin: 'token-monster', key: 'belly' } as const, null)
 
 type Block = { type: string; [field: string]: unknown }
 
@@ -103,7 +105,12 @@ const arm = async ($: EngineInterface) => {
 
   const { isFilled } = await $.prompt.fill({ text: '/compact' })
 
-  $.ui.toast(isFilled ? 'Press Enter on /compact and me eat.' : 'Run /compact and me eat.')
+  // The next step is the prompt, and the main readout says it is armed.
+  await $.ui.close({ id: DIET })
+
+  $.ui.toast(
+    `${isFilled ? 'Press Enter on /compact' : 'Run /compact'} and me eat ${chosen.length} from this conversation's context.`,
+  )
 }
 
 const disarm = async ($: EngineInterface) => {
@@ -148,11 +155,23 @@ export const registerDiet = (on: On) => {
     const room = Math.max(12, e.props.bodyColumns - 2)
     const chosen = dishes.filter(dish => ids.includes(dish.id))
     const saving = chosen.reduce((sum, dish) => sum + dish.tokens, 0)
+    const full = await read($, belly)
+    const now =
+      full === null || !full.known ? 'your context' : `${full.percent}% ${kilo(full.tokens)}/${kilo(full.window)}`
+    const after =
+      full === null || !full.known || saving === 0
+        ? ''
+        : ` -> ~${Math.round((Math.max(0, full.tokens - saving) / full.window) * 100)}% after`
 
     return (
       <Box flexDirection="column">
-        <Text bold>Pick what me eat, biggest first</Text>
-        {!e.props.isFocused && <Text dimColor>ctrl+x tab or a click to give me the keys</Text>}
+        <Text bold>Free up this conversation's context</Text>
+        <Text dimColor>These tool results sit in the context right now. Pick what me eat, biggest first.</Text>
+        <Text>
+          context {now}
+          {after}
+        </Text>
+        {!e.props.isFocused && <Text dimColor>ctrl+x tab for the keys, ctrl+x x to close</Text>}
         {ready.length > 0 && (
           <Box>
             <Text color="yellow">Armed: me eat {ready.length} on your next /compact </Text>
@@ -179,14 +198,16 @@ export const registerDiet = (on: On) => {
         <Box>
           <Button
             key="eat"
-            label={chosen.length === 0 ? 'Eat' : `Eat ${chosen.length} (~${kilo(saving)})`}
+            label={chosen.length === 0 ? 'Eat' : `Eat ${chosen.length} (frees ~${kilo(saving)})`}
             hotkey="e"
             onPress={() => arm($)}
           />
           <Text> </Text>
           <Button key="refresh" label="Refresh" hotkey="r" onPress={() => fill($)} />
+          <Text> </Text>
+          <Button key="close" label="Close" hotkey="q" role="dismiss" onPress={() => $.ui.close({ id: DIET })} />
         </Box>
-        <Text dimColor>1-9 pick, e eat, Esc close. Eat arms them; your /compact eats them.</Text>
+        <Text dimColor>1-9 pick, e eat, q close. Eat puts /compact in your prompt; Enter removes them from the context, each left as a short note.</Text>
       </Box>
     )
   })

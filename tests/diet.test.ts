@@ -69,10 +69,25 @@ test('the diet lists tool results biggest first and picks one', async ($, on) =>
 
     await ui.press({ key: 'dish-0' })
     expect((await ui.find({ key: 'dish-0' }))?.text).toMatch(/^\[x\]/)
-    expect((await ui.find({ key: 'eat' }))?.text).toBe('Eat 1 (~10k)')
+    expect((await ui.find({ key: 'eat' }))?.text).toBe('Eat 1 (frees ~10k)')
     await ui.unmount()
     await openDiet($)
   }
+})
+
+test('the diet says it eats from the live context, and what is left after', async ($, on) => {
+  menu(on)
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+  await $.session.measure({ context: { tokens: 120_000, window: 200_000, percent: 60 }, rateLimits: [], changed: ['context'] })
+  await openDiet($)
+
+  const ui = await mountDiet($, 'desktop')
+
+  expect(await ui.find({ type: 'Text', text: "Free up this conversation's context" })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'context 60% 120k/200k' })).toBeDefined()
+
+  await ui.press({ key: 'dish-0' })
+  expect(await ui.find({ type: 'Text', text: 'context 60% 120k/200k -> ~55% after' })).toBeDefined()
 })
 
 test('results sharing a message with an image are never offered', async ($, on) => {
@@ -99,9 +114,15 @@ test('withMedia finds the results that sit beside an image or a document', () =>
 
 const arm = async ($: Engine, on: On, hasClock = true) => {
   const said: string[] = []
+  const closed: string[] = []
 
   menu(on, API, hasClock)
   on('prompt.fill', () => ({ isFilled: true }))
+  on('ui.close', (_, e) => {
+    closed.push(e.id)
+
+    return { value: undefined } as never
+  })
   on('ui.toast', (_, e) => {
     said.push(e.text)
 
@@ -114,7 +135,7 @@ const arm = async ($: Engine, on: On, hasClock = true) => {
   await ui.press({ key: 'dish-0' })
   await ui.press({ key: 'eat' })
 
-  return { ui, said }
+  return { ui, said, closed }
 }
 
 const core = (on: On) => {
@@ -131,9 +152,10 @@ const core = (on: On) => {
 
 test('Eat arms the diet and puts /compact in the prompt; your /compact eats only the picked results', async ($, on) => {
   const calls = core(on)
-  const { ui, said } = await arm($, on)
+  const { ui, said, closed } = await arm($, on)
 
-  expect(said).toEqual(['Press Enter on /compact and me eat.'])
+  expect(said).toEqual(["Press Enter on /compact and me eat 1 from this conversation's context."])
+  expect(closed).toEqual(['token-monster-diet'])
   expect(await ui.find({ type: 'Text', text: /^Armed: me eat 1 on your next \/compact/ })).toBeDefined()
 
   const done = await $.session.compact({ trigger: 'manual', messages: ROWS })
