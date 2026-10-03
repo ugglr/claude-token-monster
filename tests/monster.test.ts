@@ -358,3 +358,71 @@ test('the stream passes through the monster untouched', async ($, on) => {
   ])
   await stream.result
 })
+
+const usage = (on: On, compactAt: number | undefined) =>
+  on('session.usage', (_, e) => ({
+    value: {
+      startedAt: 0,
+      context: {
+        window: 200_000,
+        ...(e?.breakdown === undefined
+          ? {}
+          : { breakdown: { isAutoCompactEnabled: compactAt !== undefined, autoCompactThreshold: compactAt } }),
+      },
+      rateLimits: [],
+    },
+  }) as never)
+
+test('the burst warning goes by the auto-compact point, not the full window', async ($, on) => {
+  engine(on)
+  usage(on, 160_000)
+  const ui = await pane($, 'desktop')
+
+  await measure($, 150_000)
+  expect(await ui.find(text('me gonna burst! /compact'))).toBeDefined()
+  expect(await ui.find({ type: 'Box', text: /^belly +█+░+ +75% 150k\/200k$/ })).toBeDefined()
+
+  await measure($, 100_000)
+  expect(await ui.find(text('*burp* me feel lighter'))).toBeDefined()
+})
+
+test('with auto-compaction off, the warnings go by the full window', async ($, on) => {
+  engine(on)
+  usage(on, undefined)
+  const ui = await pane($, 'desktop')
+
+  await measure($, 150_000)
+  expect(await ui.find(text('me so full...'))).toBeDefined()
+})
+
+const band = ($: Engine, bodyColumns = 100) =>
+  $.ui.mount({
+    plugin: 'token-monster',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+  })
+
+test('without a placed pane, one line above the prompt carries the readout', async ($, on) => {
+  engine(on)
+  on('ui.panes', () => ({ value: [] }) as never)
+  await measure($, 60_000, [{ kind: 'five_hour', percentUsed: 35 }, { kind: 'seven_day', percentUsed: 22 }])
+
+  const ui = await band($)
+  const line = (await ui.find({ type: 'Box' }))?.text
+
+  expect(line).toBe('(o)(o) nom nom ██░░░░░░ 30%  session 35%  weekly 22%  /token-monster')
+
+  const narrow = await band($, 44)
+
+  expect((await narrow.find({ type: 'Box' }))?.text).toBe('(o)(o) nom nom ██░░░░░░ 30%  session 35%')
+})
+
+test('with the pane placed, the band is left to others', async ($, on) => {
+  engine(on)
+  on('ui.panes', () => ({ value: [{ id: 'token-monster', title: 'Token Monster', isShown: true, isFocused: false, isPlaced: true }] }) as never)
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['someone else'] }) as never)
+  await measure($, 60_000)
+
+  expect(await (await band($)).find({ type: 'Text', text: /nom/ })).toBeUndefined()
+})

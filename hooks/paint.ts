@@ -208,7 +208,9 @@ export const lively = (s: Scene) =>
 // What a frame reads off the scene: the monster's place and size, and how it feels.
 const shape = (s: Scene, width: number, height: number) => {
   const t = s.tick
+  // Size goes by the window; the warnings by the share of the auto-compact point.
   const full = (s.belly?.percent ?? 0) / 100
+  const fill = s.belly?.fill ?? 0
   const idle = s.belly === null ? 0 : s.at - s.belly.fedAt
   const starving = idle >= STARVING
   const monster = s.look.monster
@@ -248,8 +250,8 @@ const shape = (s: Scene, width: number, height: number) => {
     wave: s.breathe,
     sad: idle >= SAD,
     burping: s.belly?.burpAt != null && s.at - s.belly.burpAt < BURP,
-    bursting: full * 100 >= BURST,
-    stuffed: full >= 0.75,
+    bursting: fill >= BURST,
+    stuffed: fill >= 75,
     pressure: Math.max(0, ...s.pantry.map(limit => limit.percentUsed)),
     typing,
     thinking: s.busy && !eating,

@@ -11,7 +11,7 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | What you see | What it means |
 | --- | --- |
 | **Its size** | How full the context window is. The belly inflates as the context fills. |
-| **Its face** | Its mood: hungry, happy, stuffed past 75%, dizzy eyes past 90% (time to `/compact`), a happy squint after a burp. |
+| **Its face** | Its mood: hungry, happy, stuffed past 75%, dizzy eyes past 90% (time to `/compact`), a happy squint after a burp. These go by the point where Claude Code auto-compacts, which comes well before the window is full; the belly bar shows the full window. |
 | **Tears, then sleepy Zs** | Tamagotchi hunger: sad after 15 minutes without tokens, starving after an hour. Feed it to cheer it up. |
 | **The glow around it** | Your session and weekly limits: green with room to spare, amber past 50%, pulsing red past 80%. It sweats when you get close. |
 | **How hard it chews** | How fast tokens are flowing right now. It sits still when nothing streams, nibbles as Claude starts writing, and chomps, bounces and shakes as the rate climbs. |
@@ -41,6 +41,12 @@ Today you can only `/clear` or `/compact` the whole conversation. The diet lets 
 Eat arms the diet, puts `/compact` in your prompt, and the monster tells you how many tokens it is about to eat from the context. Press Enter, and instead of summarizing the conversation, Token Monster replaces each picked result with a short note, so the model knows something was there and can run the tool again if it needs it. **Cancel** in the pane disarms it, and an automatic compaction is never touched. If the picked results are already gone (an earlier compaction or `/clear` took them), the diet disarms and your `/compact` summarizes as usual.
 
 What changes, exactly: each message holding an eaten result is rebuilt from its text. The diet only offers results whose message holds no image or document, so nothing else in it is lost; several text blocks in such a message are joined into one. Every other message stays exactly as it was. The next turn reads the context uncached once.
+
+## Requirements
+
+- Claude Code 2.1.287 or later, where mods load by default. Built and tested on 2.1.288.
+- For the pixel art, a terminal. It looks best with 24-bit color (iTerm2, Ghostty, WezTerm, Kitty); a terminal that rounds to 256 colors, such as Apple Terminal on older macOS, shows it flatter.
+- No environment variables, packages or configuration.
 
 ## Install
 
@@ -72,7 +78,7 @@ Focus the pane with `ctrl+x tab`, then press `m` to swap the monster, `c` to swa
 
 Monsters: `cookie`, `slime`, `ghost`, `gremlin`. Colors: `blue`, `cyan`, `green`, `yellow`, `magenta`, `red`, `white`. Your pick is remembered across sessions.
 
-The pixel art draws in the terminal. The desktop app and IDEs show an ASCII version of the monster with the same readout.
+The pixel art draws in the terminal. The desktop app and IDEs show an ASCII version of the monster with the same readout. When the pane cannot show, because the terminal is too narrow or you closed it, a one-line version sits above the prompt: face, mood, the belly gauge and your limits.
 
 The limit bars show whatever limits Claude Code reports: the 5-hour session and weekly windows on a Claude subscription, or a gateway's spend limit.
 
@@ -93,6 +99,39 @@ Mods are not sandboxed, so read the code before you install any mod. Here is eve
 - **The conversation's tool results**, when you open the diet, to list them; and on a diet `/compact`, the conversation, to replace the results you picked.
 
 It stores only your monster and color choice, and sends nothing anywhere: there is no network call in the code.
+
+## How it was built
+
+- **Model:** built with Claude Opus 5.5 in Claude Code, using the `plugin-authoring` skill and the mod API's TypeScript types. The mod itself never calls a model.
+- **Prompts:** it started as one line: a monster, a play on a certain cookie-loving puppet, that eats tokens and shows how full the context is. Then, in turn: a side pane with an animated monster; swapping monsters and colors; Tamagotchi sadness when unfed; the session and weekly limits; deleting chosen things from the context, "because today we can only clear or compact"; nicer monsters to screencap; idle when nothing flows and more intense as tokens flow; subagents as a super-hero power-up; fighting game combos.
+- **Review:** every change went through [Dad](https://github.com/ugglr/dad), an old-school code review agent, until it passed. Most of the iterations below were his finds.
+- **Iterations:**
+  - The first diet called `$.session.compact()` itself. A mod's own call skips that mod's hooks, so the diet could never answer it and Claude Code would have summarized everything while the toast said "Me ate". The diet now only arms itself and puts `/compact` in your prompt; your `/compact` is the one it answers.
+  - A result sharing a message with an image or a PDF would have lost them, because a rebuilt message keeps only its text. Those results are never offered.
+  - The diet was a second pane, and a mod cannot switch you back to another tab, so people got stuck in it. It is now a view inside the monster's pane.
+  - The first animation looped on timers. It now follows the model's stream as it arrives: still when nothing flows, chomping harder as the rate climbs.
+  - The burst warning first triggered at 90% of the window, which auto-compaction usually reaches first, so it never showed. It now goes by the auto-compact point, read from a local estimate that sends no request. Anthropic's [Token Weather](https://github.com/anthropics/claude-code-playground/tree/main/claude-code/mods/token-weather) mod notes the same gap.
+  - The super mode aura was first painted over the night sky and came out muddy brown; it is now added as light.
+  - A mod cannot pass `$` across an import, so the diet draws through its own hooks on the shared pane rather than being called.
+
+## Notes / limitations
+
+- Token counts from the stream, tool results and the diet are estimates, at about four characters a token. The context, limit and cost figures are Claude Code's own.
+- A diet meal rebuilds each message that held an eaten result from its text, joining text blocks, and the next turn reads the context uncached once.
+- The band above the prompt is shared: when another mod draws there, only one of them shows.
+- Combos break after a 4 second pause. Super mode counts running subagents from the agent list, so it can take a moment to power down after a background agent finishes.
+- The animation and combo state live in memory and start over when the mod reloads; your monster and color are kept.
+- Tested with 34 tests run by `claude plugin test`, and live in one long session, including a real diet meal.
+
+## Dependencies
+
+| Name | Version | License (SPDX) | Source |
+| --- | --- | --- | --- |
+| None | | | |
+
+## Third-party notices
+
+Cookie Monster is a trademark of Sesame Workshop. Dragon Ball and Super Saiyan are trademarks of their owners (Bird Studio, Shueisha, Toei Animation). Street Fighter is a trademark of Capcom. They are named only as inspiration; this project is not affiliated with or endorsed by any of them.
 
 ## License
 

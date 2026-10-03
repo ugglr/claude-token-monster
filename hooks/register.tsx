@@ -149,7 +149,9 @@ const bar = (percent: number, width: number) => {
 const barColor = (percent: number) => (percent >= RED ? 'red' : percent >= AMBER ? 'yellow' : 'green')
 
 // Tamagotchi rules: a full belly beats everything, then hunger, then a burp, then how full it is.
-const feeling = ({ percent, fedAt, burpAt }: Belly, at: number) => {
+// Moods go by `fill`, the share of the auto-compact point: that is when the context
+// actually gets summarized, usually well before the window is full.
+const feeling = ({ fill: percent, fedAt, burpAt }: Belly, at: number) => {
   const idle = at - fedAt
 
   if (percent >= BURST) return { eye: '@', say: 'me gonna burst! /compact' }
@@ -171,8 +173,32 @@ const larder = (limits: readonly Limit[]) => {
   return 'pantry full. feast time!'
 }
 
+// The auto-compact point, read from a local estimate (`summary` sends no request),
+// once per window: it only changes with the model.
+let gauged: { window: number; at: number | null } = { window: 0, at: null }
+
+const gauge = async ($: EngineInterface, window: number) => {
+  if (gauged.window !== window) {
+    try {
+      const { breakdown } = (await $.session.usage({ breakdown: 'summary' })).context
+
+      if (breakdown !== undefined) {
+        gauged = { window, at: breakdown.isAutoCompactEnabled ? (breakdown.autoCompactThreshold ?? null) : null }
+      }
+    } catch {
+      // Unknown for now; the moods go by the window until a reading comes.
+    }
+  }
+
+  return gauged.window === window ? gauged.at : null
+}
+
+const share = (tokens: number, window: number, compactAt: number | null) =>
+  Math.round((tokens / (compactAt ?? window)) * 100)
+
 const feed = async ($: EngineInterface, context: SessionContextUsage) => {
   const at = await $.clock.now()
+  const compactAt = await gauge($, context.window)
 
   scene.at = await update($, now, () => at)
   scene.belly = await update($, belly, last => {
@@ -180,8 +206,8 @@ const feed = async ($: EngineInterface, context: SessionContextUsage) => {
     // rather than count the whole compacted context as a meal.
     if (context.tokens === undefined) {
       return last === null
-        ? { percent: 0, tokens: 0, window: context.window, ate: 0, fedAt: at, burpAt: null, known: false }
-        : { ...last, window: context.window, ate: 0, known: false }
+        ? { percent: 0, tokens: 0, window: context.window, ate: 0, fedAt: at, burpAt: null, known: false, compactAt, fill: 0 }
+        : { ...last, window: context.window, ate: 0, known: false, compactAt }
     }
 
     const tokens = context.tokens
@@ -195,6 +221,8 @@ const feed = async ($: EngineInterface, context: SessionContextUsage) => {
       fedAt: last === null || ate > 0 ? at : last.fedAt,
       burpAt: ate < 0 ? at : (last?.burpAt ?? null),
       known: true,
+      compactAt,
+      fill: share(tokens, context.window, compactAt),
     }
   })
 }
@@ -208,7 +236,15 @@ const burp = async ($: EngineInterface, tokensAfter: number | undefined) => {
       ? null
       : tokensAfter === undefined
         ? { ...last, ate: 0, known: false, burpAt: at }
-        : { ...last, tokens: tokensAfter, percent: Math.round((tokensAfter / last.window) * 100), ate: 0, known: true, burpAt: at },
+        : {
+            ...last,
+            tokens: tokensAfter,
+            percent: Math.round((tokensAfter / last.window) * 100),
+            fill: share(tokensAfter, last.window, last.compactAt),
+            ate: 0,
+            known: true,
+            burpAt: at,
+          },
   )
 }
 
@@ -322,6 +358,7 @@ export const register: Register = on => {
     })
     await update($, view, () => 'monster')
     await $.ui.close({ id: OLD_DIET })
+    // Unplaced (a narrow terminal), the pane waits and the band above the prompt shows instead.
     void $.ui.open(PANE_OPEN)
 
     return next(e)
@@ -460,16 +497,66 @@ export const register: Register = on => {
   })
 
   on('ui.close', ($, e, next) => {
-    if (e.id === PANE) stop()
+    if (e.id === PANE) {
+      stop()
+      // The band above the prompt takes over once the pane is gone.
+      $.ui.invalidate('ui.render')
+    }
 
     return next(e)
+  })
+
+  // Where the pane does not show (a narrow terminal, or closed), one line above the
+  // prompt carries the readout. The band is shared: only one mod draws it at a time.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+
+    const pane = (await $.ui.panes()).find(one => one.id === PANE)
+
+    if (pane?.isShown === true && pane.isPlaced) return next(e)
+
+    const { Box, Text } = $.ui.resolve(e)
+    const at = await read($, now)
+    const full = await read($, belly)
+
+    if (full === null) return next(e)
+
+    const limits = await read($, pantry)
+    const activity = await read($, doing)
+    const power = await read($, level)
+    const hits = await read($, combo)
+    const tint = hex(PALETTE[(await read($, look)).color] ?? 0x3d7bff)
+    const { eye, say } = power > 0 && full.fill < BURST ? { eye: 'O', say: `SUPER MODE ${power}` } : feeling(full, at)
+    const [used, left] = bar(full.percent, 8)
+    const pieces = [
+      ...limits.map(limit => `  ${WINDOWS[limit.kind] ?? limit.kind.slice(0, 7)} ${Math.round(limit.percentUsed)}%`),
+      '  /token-monster',
+    ]
+    const head = `(${eye})(${eye}) ${activity !== '' ? `> ${activity}${hits >= 2 ? ` ${hits} HITS` : ''}` : say}`
+    const meter = ` ${used}${left} ${full.percent}%`
+    const room = e.props.bodyColumns - 2
+    // What fits: the face and words first, cut short if they must, then the gauges.
+    const words = head.slice(0, Math.max(10, room - meter.length))
+    const tail = pieces.filter((_, index) => words.length + meter.length + pieces.slice(0, index + 1).join('').length <= room)
+
+    return (
+      <Box paddingX={1}>
+        <Text color={tint} bold>
+          {words}
+        </Text>
+        <Text color={barColor(full.percent)}>{` ${used}`}</Text>
+        <Text dimColor>{left}</Text>
+        <Text>{` ${full.percent}%`}</Text>
+        <Text dimColor>{tail.join('')}</Text>
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const elements = $.ui.resolve(e)
     const { Box, Button, Text } = elements
     const at = await read($, now)
-    const full = (await read($, belly)) ?? { percent: 0, tokens: 0, window: 0, ate: 0, fedAt: at, burpAt: null, known: false }
+    const full = (await read($, belly)) ?? { percent: 0, tokens: 0, window: 0, ate: 0, fedAt: at, burpAt: null, known: false, compactAt: null, fill: 0 }
     const limits = await read($, pantry)
     const activity = await read($, doing)
     const dieting = (await read($, armed)).length
@@ -480,7 +567,7 @@ export const register: Register = on => {
     const hits = await read($, combo)
     // About to burst outranks super mode: that line is the /compact warning.
     const { eye, say } =
-      power === 0 || full.percent >= BURST
+      power === 0 || full.fill >= BURST
         ? feeling(full, at)
         : {
             eye: 'O',
@@ -537,47 +624,50 @@ export const register: Register = on => {
       )
     }
 
+    // Centered in the pane: the sprite, then the readout as a block as wide as the sprite.
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" alignItems="center">
         {sprite}
-        <Text color={tint} bold>
-          {say}
-        </Text>
-        <Text dimColor>
-          {activity !== ''
-            ? `> ${activity}${chain}`
-            : full.ate > 0
-              ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
-              : `fed ${span(at - full.fedAt)} ago`}
-        </Text>
-        {row('belly', full.percent, `${kilo(full.tokens)}/${kilo(full.window)}`)}
-        {limits.map(limit =>
-          row(
-            WINDOWS[limit.kind] ?? limit.kind.slice(0, 7),
-            limit.percentUsed,
-            limit.resetsAt === undefined ? '' : span(Math.max(0, Date.parse(limit.resetsAt) - at)),
-          ),
-        )}
-        {remark !== undefined && <Text dimColor>{remark}</Text>}
-        {dieting > 0 && <Text color="yellow">eating ~{kilo(plate)} tokens from the context on your next /compact</Text>}
-        <Box>
-          <Button
-            key="monster"
-            label="Monster"
-            hotkey="m"
-            onPress={() => restyle($, current => ({ ...current, monster: after(NAMES, current.monster) }))}
-          />
-          <Text> </Text>
-          <Button
-            key="color"
-            label="Color"
-            hotkey="c"
-            onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
-          />
-          <Text> </Text>
-          {/* diet.tsx answers this press: onPress cannot call into it, as the engine
-              refuses $ passed across an import. */}
-          <Button key="diet" label="Diet: free context" hotkey="d" onPress={() => undefined} />
+        <Box flexDirection="column" width={columns}>
+          <Text color={tint} bold>
+            {say}
+          </Text>
+          <Text dimColor>
+            {activity !== ''
+              ? `> ${activity}${chain}`
+              : full.ate > 0
+                ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
+                : `fed ${span(at - full.fedAt)} ago`}
+          </Text>
+          {row('belly', full.percent, `${kilo(full.tokens)}/${kilo(full.window)}`)}
+          {limits.map(limit =>
+            row(
+              WINDOWS[limit.kind] ?? limit.kind.slice(0, 7),
+              limit.percentUsed,
+              limit.resetsAt === undefined ? '' : span(Math.max(0, Date.parse(limit.resetsAt) - at)),
+            ),
+          )}
+          {remark !== undefined && <Text dimColor>{remark}</Text>}
+          {dieting > 0 && <Text color="yellow">eating ~{kilo(plate)} tokens from the context on your next /compact</Text>}
+          <Box>
+            <Button
+              key="monster"
+              label="Monster"
+              hotkey="m"
+              onPress={() => restyle($, current => ({ ...current, monster: after(NAMES, current.monster) }))}
+            />
+            <Text> </Text>
+            <Button
+              key="color"
+              label="Color"
+              hotkey="c"
+              onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
+            />
+            <Text> </Text>
+            {/* diet.tsx answers this press: onPress cannot call into it, as the engine
+                refuses $ passed across an import. */}
+            <Button key="diet" label="Diet: free context" hotkey="d" onPress={() => undefined} />
+          </Box>
         </Box>
       </Box>
     )

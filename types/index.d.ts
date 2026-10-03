@@ -8,6 +8,10 @@ export type Belly = {
   fedAt: number
   burpAt: number | null
   known: boolean
+  // Where auto-compaction runs, in tokens, or null when it is off or unknown;
+  // `fill` is the percent of that point used (of the window without one).
+  compactAt: number | null
+  fill: number
 }
 export type Look = { monster: string; color: string }
 export type Limit = { kind: string; percentUsed: number; resetsAt?: string }
