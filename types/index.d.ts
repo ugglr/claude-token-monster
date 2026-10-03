@@ -26,7 +26,8 @@ declare module 'claude-code' {
       armed: string[]
       serving: number
       view: string
-      power: number
+      level: number
+      combo: number
     }
   }
 }

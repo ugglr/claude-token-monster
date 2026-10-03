@@ -53,8 +53,8 @@ const mountDiet = ($: Engine, surface: 'terminal' | 'desktop') =>
     props: { title: 'Token Monster', isFocused: true, bodyColumns: 48, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
   })
 
-const openDiet = ($: Engine) =>
-  $.command.run({ command: 'token-monster', args: 'diet', origin: 'user', presentation: { layout: 'fullscreen', columns: 200 } } as never)
+const openDiet = ($: Engine, args = 'diet') =>
+  $.command.run({ command: 'token-monster', args, origin: 'user', presentation: { layout: 'fullscreen', columns: 200 } } as never)
 
 test('the diet lists tool results biggest first and picks one', async ($, on) => {
   menu(on)
@@ -90,6 +90,16 @@ test('the diet says it eats from the live context, and what is left after', asyn
   expect(await ui.find({ type: 'Text', text: 'context 60% 120k/200k -> ~55% after' })).toBeDefined()
 })
 
+test('"eat" and "diet" with more words after them open the diet too', async ($, on) => {
+  menu(on)
+
+  for (const args of ['eat', 'diet please', 'EAT now']) {
+    expect((await openDiet($, args)).text).toBe('Pick what Token Monster eats.')
+  }
+
+  expect(await (await mountDiet($, 'desktop')).find({ key: 'dish-0' })).toBeDefined()
+})
+
 test('results sharing a message with an image are never offered', async ($, on) => {
   const withImage = API.map((message, index) =>
     index === 2 ? { ...message, content: [...message.content, { type: 'image', source: {} }] } : message,
@@ -117,7 +127,6 @@ const arm = async ($: Engine, on: On, hasClock = true) => {
 
   menu(on, API, hasClock)
   on('prompt.fill', () => ({ isFilled: true }))
-  on('ui.close', () => ({ value: undefined }) as never)
   on('ui.toast', (_, e) => {
     said.push(e.text)
 

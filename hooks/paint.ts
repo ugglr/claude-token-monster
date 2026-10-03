@@ -1,8 +1,8 @@
 import type { Belly, Limit, Look } from '../types'
 
 // Everything the sprite reads. The gauges (belly, pantry, look) come from the
-// hooks; the motion (heat, phases, motes, combo) moves only in step(), one frame
-// at a time, and only as fast as tokens actually arrive.
+// hooks; serve(), hit() and the turn calls record what happened, and step()
+// turns it into motion one frame at a time, only as fast as tokens arrive.
 export type Scene = {
   tick: number
   at: number
@@ -29,12 +29,14 @@ export type Scene = {
   gazeUntil: number
   power: number
   combo: number
+  best: number
   comboAt: number
+  lastHitAt: number
   finish: { text: string; at: number } | null
 }
 
 type Point = { x: number; y: number }
-type Serving = { tokens: number; color: number; fromPrompt: boolean }
+type Serving = { tokens: number; color: number }
 type Mote = { x: number; y: number; px: number; py: number; color: number }
 
 export const MINUTE = 60_000
@@ -44,8 +46,9 @@ export const BURP = MINUTE
 // One pair of limit thresholds for the bars, the glow, the sweat and the remarks.
 export const AMBER = 50
 export const RED = 80
-// Tool calls closer together than this many frames chain into a combo.
-export const COMBO_GAP = 40
+// Tool calls closer together than this chain into a combo; the HUD shows it this many frames.
+const COMBO_MS = 4000
+const COMBO_FRAMES = 40
 
 export const PALETTE: Record<string, number> = {
   blue: 0x3d7bff,
@@ -107,7 +110,7 @@ const hash = (a: number, b = 0) => {
 let seed = 7
 const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32
 
-export const scene = (look: Look): Scene => ({
+export const createScene = (look: Look): Scene => ({
   tick: 0,
   at: 0,
   belly: null,
@@ -133,32 +136,72 @@ export const scene = (look: Look): Scene => ({
   gazeUntil: 0,
   power: 0,
   combo: 0,
+  best: 0,
   comboAt: -100,
+  lastHitAt: -Infinity,
   finish: null,
 })
 
 // Tokens arriving: they heat the monster up and fly into its mouth. Typing only
-// drools; it is not tokens spent.
-export const feed = (s: Scene, tokens: number, color: number, fromPrompt = false, heats = true) => {
+// drools; it is not tokens spent. Prompt-colored servings rise from the prompt.
+export const serve = (s: Scene, tokens: number, color: number, heats = true) => {
   if (tokens <= 0) return
   if (heats) s.arrived += tokens
 
-  s.servings.push({ tokens: Math.min(tokens, 3000), color, fromPrompt })
+  s.servings.push({ tokens: Math.min(tokens, 3000), color })
   s.servings = s.servings.slice(-24)
 }
 
-export const hit = (s: Scene, isError: boolean) => {
-  s.combo = s.tick - s.comboAt > COMBO_GAP ? 1 : s.combo + 1
+// A main-loop tool call landed at `at` ($.clock milliseconds): it chains if close to the last.
+export const hit = (s: Scene, isError: boolean, at: number) => {
+  s.combo = at - s.lastHitAt > COMBO_MS ? 1 : s.combo + 1
+  s.best = Math.max(s.best, s.combo)
+  s.lastHitAt = at
   s.comboAt = s.tick
 
-  if (isError) s.finish = { text: 'COUNTER', at: s.tick }
+  if (isError) {
+    s.errorAt = s.tick
+    s.finish = { text: 'COUNTER', at: s.tick }
+  }
 }
 
-export const finishTurn = (s: Scene) => {
-  if (s.combo >= 3 && s.tick - s.comboAt <= COMBO_GAP) s.finish = { text: 'K.O.', at: s.tick }
-
+export const startTurn = (s: Scene) => {
+  s.busy = true
   s.combo = 0
+  s.best = 0
 }
+
+// A turn that landed a combo of three or more ends in a K.O., however long the answer took.
+export const finishTurn = (s: Scene) => {
+  if (s.best >= 3) s.finish = { text: 'K.O.', at: s.tick }
+
+  s.busy = false
+  s.tools.clear()
+  s.combo = 0
+  s.best = 0
+}
+
+// What piled up while nothing was drawing is not a meal to replay.
+export const settle = (s: Scene) => {
+  s.arrived = 0
+  s.rate = 0
+  s.heat = 0
+  s.servings = []
+  s.motes = []
+}
+
+export const comboShown = (s: Scene) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES
+
+// Whether anything moves beyond breathing and blinking, so a frame is worth painting.
+export const lively = (s: Scene) =>
+  s.busy ||
+  s.heat > 0.02 ||
+  s.power > 0.02 ||
+  s.motes.length > 0 ||
+  s.servings.length > 0 ||
+  s.tick - s.typedAt < 15 ||
+  comboShown(s) ||
+  (s.finish !== null && s.tick - s.finish.at < 18)
 
 // What a frame reads off the scene: the monster's place and size, and how it feels.
 const shape = (s: Scene, width: number, height: number) => {
@@ -253,7 +296,7 @@ export const step = (s: Scene, width: number, height: number) => {
   for (let budget = 1 + Math.round(s.heat * 5); budget > 0 && s.servings.length > 0; budget--) {
     const serving = s.servings[0]!
     const bite = Math.max(25, serving.tokens / 40)
-    const [x, y] = serving.fromPrompt
+    const [x, y] = serving.color === PROMPT
       ? [random() * width, height - 1]
       : [random() < 0.5 ? 0 : width - 1, 2 + random() * (floor - 6)]
 
@@ -347,10 +390,11 @@ const sky = (c: Canvas, { t, floor }: Shape) => {
 
 // The glow is the pantry: green with room to spare, amber, then pulsing red.
 const glow = (c: Canvas, { t, cx, cy, rx, ry, floor, pressure, power }: Shape, hasLimits: boolean) => {
-  if (!hasLimits || power > 0.5) return
+  // In super mode the aura takes over, save a limit past red: that warning always shows.
+  if (!hasLimits || (power > 0.5 && pressure < RED)) return
 
   const color = pressure >= RED ? 0xff3b3b : pressure >= AMBER ? 0xffb02e : 0x2fd27a
-  const pulse = (pressure >= RED ? 0.55 + 0.45 * Math.sin(t * 0.6) : 1) * (1 - power * 2)
+  const pulse = pressure >= RED ? 0.55 + 0.45 * Math.sin(t * 0.6) : 1 - power
 
   for (let y = 0; y < floor; y++) {
     for (let x = 0; x < c.width; x++) {
@@ -520,7 +564,8 @@ const face = (c: Canvas, f: Shape) => {
         ? [[cx - rx * 0.32, cy - ry * 0.78, -1], [cx + rx * 0.32, cy - ry * 0.78, 1]]
         : [[cx - rx * 0.33, cy - ry * 0.3, -1], [cx + rx * 0.33, cy - ry * 0.3, 1]]
   const re = Math.max(1.8, r0 * (monster === 'slime' ? 0.36 : monster === 'cookie' ? 0.27 : 0.21))
-  const superEyes = f.power > 0.5
+  // A belly about to burst outranks super mode: the dizzy eyes are the /compact warning.
+  const superEyes = f.power > 0.5 && !bursting
   const happy = !superEyes && (burping || (stuffed && !bursting && !f.eating && !f.thinking))
   const fierce = angry || superEyes
 
@@ -675,7 +720,7 @@ const write = (c: Canvas, text: string, x0: number, y0: number, scale: number, f
 const hud = (c: Canvas, s: Scene) => {
   const since = s.tick - s.comboAt
 
-  if (s.combo >= 2 && since <= COMBO_GAP) write(c, `${s.combo} HITS`, since < 2 ? 3 : 2, 2, 1, 0xffe04d, 0xff7a1a)
+  if (comboShown(s)) write(c, `${s.combo} HITS`, since < 2 ? 3 : 2, 2, 1, 0xffe04d, 0xff7a1a)
 
   if (s.finish !== null && s.tick - s.finish.at < 18 && (s.tick - s.finish.at) % 6 < 5) {
     const big = s.finish.text === 'K.O.'

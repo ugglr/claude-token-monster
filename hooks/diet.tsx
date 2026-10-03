@@ -1,9 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, SessionMessage } from 'claude-code'
 
-
 import type { Dish } from '../types'
-import { kilo } from './format'
+import { PANE, PANE_OPEN, isDietWord, kilo, tokens } from './format'
 
 // The diet: picked tool results replaced by a stub, so every tool call keeps its
 // result and the conversation stays valid. Roughly four characters to a token.
@@ -16,7 +15,6 @@ import { kilo } from './format'
 // Its hooks sit outside the monster's on the same pane and pass when `view` is
 // not 'diet'. Earlier versions opened a pane under this id; session.start closes it.
 export const OLD_DIET = 'token-monster-diet'
-const PANE = 'token-monster'
 
 // Nine, so each has a digit to press.
 const COURSES = 9
@@ -35,8 +33,6 @@ const belly = atom({ plugin: 'token-monster', key: 'belly' } as const, null)
 
 type Block = { type: string; [field: string]: unknown }
 
-const estimate = (text: string) => Math.ceil(text.length / 4)
-
 export const label = (input: Record<string, unknown>) =>
   String(LABELS.map(name => input[name]).find(value => typeof value === 'string') ?? '')
 
@@ -45,7 +41,7 @@ const short = (tool: string) =>
   tool.startsWith('mcp__') ? tool.split('__').slice(1).join('.').replace(/^claude_ai_/, '') : tool
 
 const stub = (tool: string, text: string) =>
-  `${EATEN}${tool} result (~${kilo(estimate(text))} tokens) to free context. Run the tool again if you need it.]`
+  `${EATEN}${tool} result (~${kilo(tokens(text))} tokens) to free context. Run the tool again if you need it.]`
 
 // A message holding an eaten result is rebuilt from its text, which would drop an
 // image or a document beside it: the results of such a message are never offered.
@@ -95,7 +91,7 @@ const fill = async ($: EngineInterface) => {
     for (const use of message.toolUses) {
       if (use.text === undefined || use.text.startsWith(EATEN) || unsafe.has(use.tool_use_id)) continue
 
-      dishes.push({ id: use.tool_use_id, tool: short(use.tool), label: label(use.input), tokens: estimate(use.text) })
+      dishes.push({ id: use.tool_use_id, tool: short(use.tool), label: label(use.input), tokens: tokens(use.text) })
     }
   }
 
@@ -164,7 +160,7 @@ export const registerDiet = (on: On) => {
     const eaten = e.messages
       .flatMap(message => message.toolResults ?? [])
       .filter(result => meal.has(result.tool_use_id))
-      .reduce((sum, result) => sum + estimate(result.text), 0)
+      .reduce((sum, result) => sum + tokens(result.text), 0)
 
     $.ui.toast(`Me eating ~${kilo(eaten)} tokens from the context. *burp*`)
 
@@ -173,18 +169,19 @@ export const registerDiet = (on: On) => {
 
   // `diet` is this module's word; the monster's command passes it down here.
   on('command.run', { command: 'token-monster' }, async ($, e, next) => {
-    if (e.args.trim().toLowerCase() !== 'diet') return next(e)
+    if (!isDietWord(e.args)) return next(e)
 
     await showDiet($)
-    await $.ui.open({ id: PANE, title: 'Token Monster', columns: 46, focus: true })
+    await $.ui.open({ ...PANE_OPEN, focus: true })
 
     return { text: 'Pick what Token Monster eats.' }
   })
 
-  on('ui.press', async ($, e, next) => {
-    if (e.plugin === 'token-monster' && e.element === 'diet') await fill($)
+  // The monster's Diet button: this module alone switches the view to the diet.
+  on('ui.press', { plugin: 'token-monster', element: 'diet' }, async ($, e) => {
+    await showDiet($)
 
-    return next(e)
+    return { element: e.element }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {

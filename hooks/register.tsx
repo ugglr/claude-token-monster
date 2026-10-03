@@ -3,11 +3,10 @@ import type { EngineInterface, Register, SessionContextUsage, Timer } from 'clau
 
 import type { Belly, Limit, Look } from '../types'
 import { OLD_DIET, label, registerDiet } from './diet'
-import { kilo } from './format'
+import { PANE, PANE_OPEN, isDietWord, kilo, tokens } from './format'
 import {
   AMBER,
   BURP,
-  COMBO_GAP,
   MINUTE,
   PALETTE,
   PROMPT,
@@ -16,18 +15,20 @@ import {
   STARVING,
   TEXT,
   THINKING,
+  createScene,
   encode,
-  feed as serve,
   finishTurn,
   hit,
+  lively,
   paint,
-  scene as newScene,
+  serve,
+  settle,
+  startTurn,
   step,
   toolColor,
 } from './paint'
 import type { Scene } from './paint'
 
-const PANE = 'token-monster'
 const FPS = 10
 const BAR = 20
 
@@ -119,12 +120,15 @@ const doing = atom({ plugin: 'token-monster', key: 'doing' } as const, '')
 const armed = atom({ plugin: 'token-monster', key: 'armed' } as const, [])
 const serving = atom({ plugin: 'token-monster', key: 'serving' } as const, 0)
 // The super mode level, 0 to 3: subagents running, plus one for three tools at once.
-const power = atom({ plugin: 'token-monster', key: 'power' } as const, 0)
+const level = atom({ plugin: 'token-monster', key: 'level' } as const, 0)
+// This turn's combo so far, for the readout; the sprite draws its own from the scene.
+const combo = atom({ plugin: 'token-monster', key: 'combo' } as const, 0)
 // Which view the pane shows; the diet module draws 'diet' (see hooks/diet.tsx).
 const view = atom({ plugin: 'token-monster', key: 'view' } as const, 'monster')
 
-// What the sprite animates from; the atoms above are what the readout draws.
-const scene: Scene = newScene({ monster: 'cookie', color: 'blue' })
+// What the sprite animates from. The readout draws from the atoms above, save the
+// helper count, which only ever changes together with `level`.
+const scene: Scene = createScene({ monster: 'cookie', color: 'blue' })
 
 const after = (list: string[], at: string) => list[(list.indexOf(at) + 1) % list.length] ?? at
 const hex = (color: number) => `#${color.toString(16).padStart(6, '0')}`
@@ -213,6 +217,7 @@ const tick = async ($: EngineInterface) => {
   const at = await $.clock.now()
 
   scene.at = await update($, now, () => at)
+  await rally($, true)
 }
 
 const act = async ($: EngineInterface, text: string) => {
@@ -222,26 +227,28 @@ const act = async ($: EngineInterface, text: string) => {
 // Agent tool calls in flight: a foreground subagent runs inside its call.
 let inflight = 0
 
+// The level last written, so an unchanged level never redraws the readout.
+let written = 0
+
 // Background agents outlive their tool call, so minions come from the agent list too.
+// Never throws: a failed list or write leaves the last known level until the next try.
 const rally = async ($: EngineInterface, isListed = false) => {
-  if (isListed) {
-    try {
+  try {
+    if (isListed) {
       const running = (await $.agent.list()).filter(agent => agent.status === 'running').length
 
       scene.minions = Math.max(inflight, running)
-    } catch {
-      // Unknown this time; the next poll tries again.
+    } else {
+      scene.minions = Math.max(inflight, scene.minions)
     }
-  } else {
-    scene.minions = Math.max(inflight, scene.minions)
+
+    scene.level = Math.min(3, scene.minions + (scene.tools.size >= 3 ? 1 : 0))
+
+    if (scene.level !== written) written = await update($, level, () => scene.level)
+  } catch {
+    // Unknown this time; the next poll tries again.
   }
-
-  scene.level = Math.min(3, scene.minions + (scene.tools.size >= 3 ? 1 : 0))
-  await update($, power, last => (last === scene.level ? last : scene.level))
 }
-
-// Rough tokens in a piece of text, about four characters each.
-const tokens = (text: string | undefined) => Math.ceil((text?.length ?? 0) / 4)
 
 const restyle = async ($: EngineInterface, change: (current: Look) => Look) => {
   scene.look = await update($, look, change)
@@ -266,18 +273,8 @@ const frame = async ($: EngineInterface) => {
 
   if (scene.tick % 20 === 0) void rally($, true)
 
-  const lively =
-    scene.busy ||
-    scene.heat > 0.02 ||
-    scene.power > 0.02 ||
-    scene.motes.length > 0 ||
-    scene.servings.length > 0 ||
-    scene.tick - scene.typedAt < 15 ||
-    scene.tick - scene.comboAt <= COMBO_GAP ||
-    (scene.finish !== null && scene.tick - scene.finish.at < 18)
-
   // Idle, a third of the frames is plenty for blinking and breathing.
-  if (painting || (!lively && scene.tick % 3 !== 0)) return
+  if (painting || (!lively(scene) && scene.tick % 3 !== 0)) return
 
   painting = true
 
@@ -316,11 +313,11 @@ export const register: Register = on => {
     await $.command.register({
       name: 'token-monster',
       description: 'Open the Token Monster pane, swap its monster and color, or put it on a diet',
-      argumentHint: `[${NAMES.join('|')}] [color] | diet`,
+      argumentHint: `[${NAMES.join('|')}] [color] | diet | eat`,
     })
     await update($, view, () => 'monster')
     await $.ui.close({ id: OLD_DIET })
-    void $.ui.open({ id: PANE, title: 'Token Monster', columns: 46 })
+    void $.ui.open(PANE_OPEN)
 
     return next(e)
   })
@@ -328,13 +325,13 @@ export const register: Register = on => {
   on('command.run', { command: 'token-monster' }, async ($, e, next) => {
     const words = e.args.toLowerCase().split(/\s+/).filter(Boolean)
 
-    if (words[0] === 'diet') return next(e)
+    if (isDietWord(e.args)) return next(e)
 
     const unknown = words.filter(word => !NAMES.includes(word) && !COLORS.includes(word))
 
     if (unknown.length > 0) {
       return {
-        text: `Me not know ${unknown.join(', ')}. Monsters: ${NAMES.join(', ')}. Colors: ${COLORS.join(', ')}. Or: diet.`,
+        text: `Me not know ${unknown.join(', ')}. Monsters: ${NAMES.join(', ')}. Colors: ${COLORS.join(', ')}. Or: diet (or eat).`,
       }
     }
 
@@ -343,7 +340,7 @@ export const register: Register = on => {
       color: words.find(word => COLORS.includes(word)) ?? current.color,
     }))
     await update($, view, () => 'monster')
-    await $.ui.open({ id: PANE, title: 'Token Monster', columns: 46, focus: true })
+    await $.ui.open({ ...PANE_OPEN, focus: true })
 
     return { text: 'Token Monster is hungry.' }
   })
@@ -372,13 +369,13 @@ export const register: Register = on => {
 
   on('prompt.edit', ($, e, next) => {
     scene.typedAt = scene.tick
-    serve(scene, 2, PROMPT, true, false)
+    serve(scene, 2, PROMPT, false)
 
     return next(e)
   })
 
   on('prompt.submit', ($, e, next) => {
-    serve(scene, tokens(e.text), PROMPT, true)
+    serve(scene, tokens(e.text), PROMPT)
 
     return next(e)
   })
@@ -397,13 +394,13 @@ export const register: Register = on => {
 
       yield chunk
     }
-
-    return await stream.result
   })
 
   on('turn.start', async ($, e, next) => {
-    scene.busy = true
+    startTurn(scene)
+    await update($, combo, () => 0)
     await act($, 'thinking...')
+    await rally($, true)
 
     return next(e)
   })
@@ -411,13 +408,12 @@ export const register: Register = on => {
   // Subagents' turns complete too, carrying their agentId: only the main turn ends the meal.
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
-      scene.busy = false
-      scene.tools.clear()
       finishTurn(scene)
+      await update($, combo, () => 0)
       await act($, '')
     }
 
-    await rally($, e.agentId !== undefined)
+    await rally($, true)
 
     return next(e)
   })
@@ -434,18 +430,18 @@ export const register: Register = on => {
 
     const isAgent = e.tool === 'Agent'
 
-    scene.tools.set(e.tool_use_id, e.tool)
-    if (isAgent) inflight += 1
-    await rally($)
-    await act($, `${e.tool} ${label(e as unknown as Record<string, unknown>)}`.trim())
-
+    // Everything counted up is inside the try, so the finally always counts it down.
     try {
+      scene.tools.set(e.tool_use_id, e.tool)
+      if (isAgent) inflight += 1
+      await rally($)
+      await act($, `${e.tool} ${label(e as unknown as Record<string, unknown>)}`.trim())
+
       const ran = await next(e)
 
-      if (ran.isError === true) scene.errorAt = scene.tick
-
-      hit(scene, ran.isError === true)
+      hit(scene, ran.isError === true, await $.clock.now())
       serve(scene, tokens(ran.text), toolColor(e.tool))
+      await update($, combo, () => scene.combo)
 
       return ran
     } finally {
@@ -464,7 +460,6 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const elements = $.ui.resolve(e)
-
     const { Box, Button, Text } = elements
     const at = await read($, now)
     const full = (await read($, belly)) ?? { percent: 0, tokens: 0, window: 0, ate: 0, fedAt: at, burpAt: null, known: false }
@@ -473,21 +468,25 @@ export const register: Register = on => {
     const dieting = (await read($, armed)).length
     const plate = await read($, serving)
     const { monster, color } = await read($, look)
-    const level = await read($, power)
-    const helpers = Math.max(1, scene.minions)
+    const power = await read($, level)
+    const helpers = scene.minions
+    const hits = await read($, combo)
+    // About to burst outranks super mode: that line is the /compact warning.
     const { eye, say } =
-      level === 0
+      power === 0 || full.percent >= 90
         ? feeling(full, at)
         : {
             eye: 'O',
             say: [
               '',
-              `SUPER MODE! me and ${helpers} helper${helpers === 1 ? '' : 's'}`,
+              helpers === 0
+                ? 'SUPER MODE! three tools at once'
+                : `SUPER MODE! me and ${helpers} helper${helpers === 1 ? '' : 's'}`,
               'SUPER MODE 2!! power rising',
               'SUPER MODE 3!!! power level over 9000',
-            ][level]!,
+            ][power]!,
           }
-    const combo = scene.combo >= 2 && scene.tick - scene.comboAt <= COMBO_GAP ? `  ${scene.combo} HIT COMBO` : ''
+    const chain = hits >= 2 ? `  ${hits} HIT COMBO` : ''
     const columns = Math.max(16, Math.min(48, e.props.bodyColumns))
     const width = Math.max(6, Math.min(BAR, columns - 23))
     const remark = larder(limits)
@@ -514,7 +513,10 @@ export const register: Register = on => {
       const rows = Math.max(6, Math.min(16, e.props.scroll.bodyRows - 9))
 
       canvas = { columns, rows }
-      loop ??= $.clock.every(1000 / FPS, () => void frame($))
+      if (loop === undefined) {
+        settle(scene)
+        loop = $.clock.every(1000 / FPS, () => void frame($))
+      }
       sprite = <Raster key="sprite" columns={columns} rows={rows} cells={encode(paint(scene, columns, rows * 2), columns, rows)} />
     } else {
       const drawing = ASCII[monster] ?? ASCII.cookie!
@@ -536,7 +538,7 @@ export const register: Register = on => {
         </Text>
         <Text dimColor>
           {activity !== ''
-            ? `> ${activity}${combo}`
+            ? `> ${activity}${chain}`
             : full.ate > 0
               ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
               : `fed ${span(at - full.fedAt)} ago`}
@@ -566,7 +568,8 @@ export const register: Register = on => {
             onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
           />
           <Text> </Text>
-          <Button key="diet" label="Diet: free context" hotkey="d" onPress={() => update($, view, () => 'diet')} />
+          {/* The diet module answers this press and switches the view. */}
+          <Button key="diet" label="Diet: free context" hotkey="d" onPress={() => undefined} />
         </Box>
       </Box>
     )

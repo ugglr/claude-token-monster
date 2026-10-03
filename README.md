@@ -17,8 +17,8 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | **How hard it chews** | How fast tokens are flowing right now. It sits still when nothing streams, nibbles as Claude starts writing, and chomps, bounces and shakes as the rate climbs. |
 | **Tokens flying into its mouth** | The actual stream, piece by piece: gold for text, lilac for thinking, then by tool: green Bash, blue reads and searches, orange edits, purple web, pink agents. A big tool result is a big meal. |
 | **Looking down and drooling** | You are typing. Your prompt floats up into its mouth when you send it. |
-| **"7 HITS"** | A combo: tool calls landing back to back, fighting game style. A turn that ends on a combo of three or more gets a **K.O.**; a failed tool call flashes **COUNTER**. |
-| **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 is over 9000. Its helpers bounce beside it. |
+| **"7 HITS"** | A combo: tool calls landing back to back, fighting game style. A turn that landed a combo of three or more ends in a **K.O.**; a failed tool call flashes **COUNTER**. |
+| **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 is over 9000. Its helpers bounce beside it. A belly about to burst or a limit past 80% still shows through. |
 | **Angry brows** | A tool just failed. |
 
 Under the sprite, a readout gives the exact numbers:
@@ -36,7 +36,7 @@ weekly  ████░░░░░░░░░░░░░░░░  22% 4d3h
 
 ## Put it on a diet
 
-Today you can only `/clear` or `/compact` the whole conversation. The diet lets you pick what goes. Press `d` in the pane, or run `/token-monster diet`, to switch the pane to the diet and list the biggest tool results sitting in this conversation's context right now (file reads, command output, web pages), with the context fill and where it would land after eating. Press `1` to `9` to tick the ones you no longer need, then `e` to **Eat**, or `q` to go back to the monster.
+Today you can only `/clear` or `/compact` the whole conversation. The diet lets you pick what goes. Press `d` in the pane, or run `/token-monster diet` (or `eat`), to switch the pane to the diet and list the biggest tool results sitting in this conversation's context right now (file reads, command output, web pages), with the context fill and where it would land after eating. Press `1` to `9` to tick the ones you no longer need, then `e` to **Eat**, or `q` to go back to the monster.
 
 Eat arms the diet, puts `/compact` in your prompt, and the monster tells you how many tokens it is about to eat from the context. Press Enter, and instead of summarizing the conversation, Token Monster replaces each picked result with a short note, so the model knows something was there and can run the tool again if it needs it. **Cancel** in the pane disarms it, and an automatic compaction is never touched. If the picked results are already gone (an earlier compaction or `/clear` took them), the diet disarms and your `/compact` summarizes as usual.
 
@@ -83,7 +83,14 @@ claude plugin validate .
 claude plugin test .
 ```
 
-Mods are not sandboxed, so read the code before you install any mod. This one reads the context, limit and activity figures Claude Code already shows you, lists tool results for the diet, and stores your monster and color choice. It sends nothing anywhere.
+Mods are not sandboxed, so read the code before you install any mod. Here is everything this one sees:
+
+- **The model's response stream**, as it arrives, for the main conversation and every subagent: text, thinking, and the arguments of each tool call. It measures their length to animate the monster and keeps nothing.
+- **The text of each prompt you send**, and **each tool result**, subagents' included, measured the same way.
+- **The context, limit and cost figures** Claude Code already shows in its status line, and the names of the tools running.
+- **The conversation's tool results**, when you open the diet, to list them; and on a diet `/compact`, the conversation, to replace the results you picked.
+
+It stores only your monster and color choice, and sends nothing anywhere: there is no network call in the code.
 
 ## License
 

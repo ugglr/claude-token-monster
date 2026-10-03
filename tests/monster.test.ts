@@ -1,4 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
+
+import { createScene, finishTurn, hit, startTurn } from '../hooks/paint'
 import type { On, SessionContextUsage } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
@@ -191,7 +193,7 @@ test('/token-monster swaps by name and lists the options for an unknown word', a
     $.command.run({ command: 'token-monster', args, origin: 'user', presentation: { layout: 'fullscreen', columns: 200 } } as never)
 
   expect((await run('dragon')).text).toBe(
-    'Me not know dragon. Monsters: cookie, slime, ghost, gremlin. Colors: blue, cyan, green, yellow, magenta, red, white. Or: diet.',
+    'Me not know dragon. Monsters: cookie, slime, ghost, gremlin. Colors: blue, cyan, green, yellow, magenta, red, white. Or: diet (or eat).',
   )
   expect((await run('Gremlin GREEN')).text).toBe('Token Monster is hungry.')
   expect(await (await pane($, 'desktop')).find(text(' |  o   o  |'))).toBeDefined()
@@ -201,10 +203,11 @@ test('/token-monster swaps by name and lists the options for an unknown word', a
 type Caller = { call: (input: Record<string, unknown>) => Promise<unknown> }
 const call = ($: Engine, input: Record<string, unknown>) => ($.tool as unknown as Caller).call(input)
 
+// Tools beneath the monster; with a gate, each call waits on it after saying it arrived.
 const tool = (on: On, gate?: Promise<void>, reached?: () => void) => {
   on('agent.list', () => ({ value: [] }) as never)
   on('tool.call', async (_, e) => {
-    if (e.tool === 'Agent') {
+    if (gate !== undefined && (e.tool === 'Agent' || e.tool === 'Bash')) {
       reached?.()
       await gate
     }
@@ -213,33 +216,120 @@ const tool = (on: On, gate?: Promise<void>, reached?: () => void) => {
   })
 }
 
-test('chained tool calls show a combo in the readout', async ($, on) => {
-  engine(on)
-  tool(on)
+const turns = (on: On) => {
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+}
+
+const done = { answer: '', durationMs: 1, isAborted: false, reason: 'answer' as const }
+
+const latch = () => {
+  let open = () => {}
+  const shut = new Promise<void>(resolve => (open = resolve))
+
+  return { open, shut }
+}
+
+test('tool calls chain into a combo in the readout; a pause breaks it and the turn end clears it', async ($, on) => {
+  const clock = engine(on)
+
+  tool(on)
+  turns(on)
   const ui = await pane($, 'desktop')
 
   await $.turn.start({ text: 'go', turnId: 't1' })
-  for (let i = 0; i < 3; i++) await call($, { tool: 'Read', file_path: `f${i}.ts` })
-
+  for (let i = 0; i < 3; i++) {
+    await call($, { tool: 'Read', file_path: `f${i}.ts` })
+    await clock.advance(1000)
+  }
   expect(await ui.find(text('> thinking...  3 HIT COMBO'))).toBeDefined()
+
+  await clock.advance(5000)
+  await call($, { tool: 'Read', file_path: 'late.ts' })
+  expect(await ui.find(text('> thinking...'))).toBeDefined()
+
+  await call($, { tool: 'Read', file_path: 'again.ts' })
+  expect(await ui.find(text('> thinking...  2 HIT COMBO'))).toBeDefined()
+
+  await $.turn.complete({ ...done, turnId: 't1' })
+  expect(await ui.find(text(/HIT COMBO/))).toBeUndefined()
+})
+
+test('a turn that landed a combo ends in a K.O., however long the answer took', () => {
+  const s = createScene({ monster: 'cookie', color: 'blue' })
+
+  startTurn(s)
+  hit(s, false, 0)
+  hit(s, false, 1000)
+  hit(s, false, 2000)
+  s.tick += 600
+  finishTurn(s)
+  expect(s.finish?.text).toBe('K.O.')
+
+  startTurn(s)
+  hit(s, false, 0)
+  hit(s, false, 9000)
+  finishTurn(s)
+  expect(s.finish?.text).toBe('K.O.')
+  expect(s.finish?.at).toBe(600)
+
+  hit(s, true, 20_000)
+  expect(s.finish?.text).toBe('COUNTER')
+  expect(s.errorAt).toBe(s.tick)
+})
+
+test('three tools at once is super mode without a helper', async ($, on) => {
+  engine(on)
+  const gate = latch()
+  let arrived = 0
+  const three = latch()
+
+  tool(on, gate.shut, () => {
+    arrived += 1
+    if (arrived === 3) three.open()
+  })
+  const ui = await pane($, 'desktop')
+  const running = [0, 1, 2].map(i => call($, { tool: 'Bash', command: `echo ${i}` }))
+
+  await three.shut
+  expect(await ui.find(text('SUPER MODE! three tools at once'))).toBeDefined()
+
+  gate.open()
+  await Promise.all(running)
+  expect(await ui.find(text(/SUPER MODE/))).toBeUndefined()
+})
+
+test('a belly about to burst outranks super mode', async ($, on) => {
+  engine(on)
+  const gate = latch()
+  const inside = latch()
+
+  tool(on, gate.shut, inside.open)
+  const ui = await pane($, 'desktop')
+
+  await measure($, 190_000)
+  const running = call($, { tool: 'Agent', description: 'help', prompt: 'help me', subagent_type: 'general-purpose' })
+
+  await inside.shut
+  expect(await ui.find(text('me gonna burst! /compact'))).toBeDefined()
+
+  gate.open()
+  await running
 })
 
 test('a running subagent sends the monster into super mode, and it powers down after', async ($, on) => {
   engine(on)
-  let release = () => {}
-  let reached = () => {}
-  const gate = new Promise<void>(resolve => (release = resolve))
-  const inside = new Promise<void>(resolve => (reached = resolve))
+  const gate = latch()
+  const inside = latch()
 
-  tool(on, gate, reached)
+  tool(on, gate.shut, inside.open)
   const ui = await pane($, 'desktop')
   const running = call($, { tool: 'Agent', description: 'help', prompt: 'help me', subagent_type: 'general-purpose' })
 
-  await inside
+  await inside.shut
   expect(await ui.find(text('SUPER MODE! me and 1 helper'))).toBeDefined()
 
-  release()
+  gate.open()
   await running
   expect(await ui.find(text(/SUPER MODE/))).toBeUndefined()
 })
