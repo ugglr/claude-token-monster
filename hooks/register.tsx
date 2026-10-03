@@ -152,6 +152,26 @@ const barColor = (percent: number) => (percent >= RED ? 'red' : percent >= AMBER
 // Tamagotchi rules: a full belly beats everything, then hunger, then a burp, then how full it is.
 // Moods go by `fill`, the share of the auto-compact point: that is when the context
 // actually gets summarized, usually well before the window is full.
+// What a limit is called in the readout and the band.
+const limitName = (kind: string) => WINDOWS[kind] ?? kind.slice(0, 7)
+
+const onFire = (hits: number) => (hits >= 2 ? `  on fire x${hits}` : '')
+
+// What it says, for the pane and the band alike: super mode, unless the belly is
+// about to burst, whose line is the /compact warning.
+const voice = (full: Belly, at: number, power: number, helpers: number) =>
+  power === 0 || full.fill >= BURST
+    ? feeling(full, at)
+    : {
+        eye: 'O',
+        say: [
+          '',
+          helpers === 0 ? 'SUPER MODE! three tools at once' : `SUPER MODE! me and ${helpers} helper${helpers === 1 ? '' : 's'}`,
+          'SUPER MODE 2!! power rising',
+          'SUPER MODE 3!!! power level over 9000',
+        ][power]!,
+      }
+
 const feeling = ({ fill: percent, fedAt, burpAt }: Belly, at: number) => {
   const idle = at - fedAt
 
@@ -185,17 +205,20 @@ const clocked = async ($: EngineInterface) => {
   return at
 }
 
-// The auto-compact point, read from a local estimate (`summary` sends no request),
-// once per window: it only changes with the model.
-let gauged: { window: number; at: number | null } = { window: 0, at: null }
+// The auto-compact point, read from a local estimate (`summary` sends no request):
+// again when the window changes (a new model), and every 5 minutes, which picks
+// up auto-compact turned on or off in /config.
+let gauged: { window: number; at: number | null; readAt: number } = { window: 0, at: null, readAt: -Infinity }
 
-const gauge = async ($: EngineInterface, window: number) => {
-  if (gauged.window !== window) {
+const gauge = async ($: EngineInterface, window: number, now: number) => {
+  if (gauged.window !== window || now - gauged.readAt > 5 * MINUTE) {
     try {
       const { breakdown } = (await $.session.usage({ breakdown: 'summary' })).context
 
-      if (breakdown !== undefined) {
-        gauged = { window, at: breakdown.isAutoCompactEnabled ? (breakdown.autoCompactThreshold ?? null) : null }
+      gauged = {
+        window,
+        at: breakdown?.isAutoCompactEnabled === true ? (breakdown.autoCompactThreshold ?? null) : null,
+        readAt: now,
       }
     } catch {
       // Unknown for now; the moods go by the window until a reading comes.
@@ -210,7 +233,7 @@ const share = (tokens: number, window: number, compactAt: number | null) =>
 
 const feed = async ($: EngineInterface, context: SessionContextUsage) => {
   const at = await clocked($)
-  const compactAt = await gauge($, context.window)
+  const compactAt = await gauge($, context.window, at)
   scene.belly = await update($, belly, last => {
     // Right after a compaction the window reports no fill: wait for a real one
     // rather than count the whole compacted context as a meal.
@@ -261,7 +284,7 @@ const stock = async ($: EngineInterface, limits: Limit[]) => {
 }
 
 const tick = async ($: EngineInterface) => {
-  const at = await clocked($)
+  await clocked($)
   await rally($, true)
 }
 
@@ -540,13 +563,13 @@ export const register: Register = on => {
     const power = await read($, level)
     const hits = await read($, combo)
     const tint = hex(PALETTE[(await read($, look)).color] ?? 0x3d7bff)
-    const { eye, say } = power > 0 && full.fill < BURST ? { eye: 'O', say: `SUPER MODE ${power}` } : feeling(full, at)
+    const { eye, say } = voice(full, at, power, scene.minions)
     const [used, left] = bar(full.percent, 8)
     const pieces = [
-      ...limits.map(limit => `  ${WINDOWS[limit.kind] ?? limit.kind.slice(0, 7)} ${Math.round(limit.percentUsed)}%`),
+      ...limits.map(limit => `  ${limitName(limit.kind)} ${Math.round(limit.percentUsed)}%`),
       '  /token-monster',
     ]
-    const head = `(${eye})(${eye}) ${activity !== '' ? `> ${activity}${hits >= 2 ? ` on fire x${hits}` : ''}` : say}`
+    const head = `(${eye})(${eye}) ${activity !== '' ? `> ${activity}${onFire(hits)}` : say}`
     const meter = ` ${used}${left} ${full.percent}%`
     const room = e.props.bodyColumns - 2
     // What fits: the face and words first, cut short if they must, then the gauges.
@@ -580,21 +603,8 @@ export const register: Register = on => {
     const helpers = scene.minions
     const hits = await read($, combo)
     // About to burst outranks super mode: that line is the /compact warning.
-    const { eye, say } =
-      power === 0 || full.fill >= BURST
-        ? feeling(full, at)
-        : {
-            eye: 'O',
-            say: [
-              '',
-              helpers === 0
-                ? 'SUPER MODE! three tools at once'
-                : `SUPER MODE! me and ${helpers} helper${helpers === 1 ? '' : 's'}`,
-              'SUPER MODE 2!! power rising',
-              'SUPER MODE 3!!! power level over 9000',
-            ][power]!,
-          }
-    const chain = hits >= 2 ? `  on fire x${hits}` : ''
+    const { eye, say } = voice(full, at, power, helpers)
+    const chain = onFire(hits)
     // The sprite takes up to 64 columns; the readout stays a 48 column block under it.
     const wide = Math.max(16, Math.min(64, e.props.bodyColumns))
     const columns = Math.min(48, wide)
@@ -658,7 +668,7 @@ export const register: Register = on => {
           {row('belly', full.percent, `${kilo(full.tokens)}/${kilo(full.window)}`)}
           {limits.map(limit =>
             row(
-              WINDOWS[limit.kind] ?? limit.kind.slice(0, 7),
+              limitName(limit.kind),
               limit.percentUsed,
               limit.resetsAt === undefined ? '' : span(Math.max(0, Date.parse(limit.resetsAt) - at)),
             ),

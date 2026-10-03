@@ -12,7 +12,7 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | --- | --- |
 | **Its size** | How full the context window is. The belly inflates as the context fills. |
 | **Its face** | Its mood: hungry, happy, stuffed past 75%, dizzy eyes past 90% (time to `/compact`), a happy squint after a burp. These go by the point where Claude Code auto-compacts, which comes well before the window is full; the belly bar shows the full window. |
-| **Tears, then sleepy Zs** | Tamagotchi hunger: sad after 15 minutes without tokens, starving after an hour. Feed it to cheer it up. |
+| **Tears, then a grey droop** | Tamagotchi hunger: sad after 15 minutes without tokens, starving and greying after an hour. A hungry monster does not doze off. Feed it to cheer it up. |
 | **The glow around it** | Your session and weekly limits: green with room to spare, amber past 50%, pulsing red past 80%. It sweats when you get close. |
 | **How hard it chews** | How fast tokens are flowing right now. It sits still when nothing streams, nibbles as Claude starts writing, and shovels food in with both hands, bouncing and shaking, as the rate climbs. Crumbs fly. |
 | **Tokens flying into its mouth** | The actual stream, piece by piece: gold for text, lilac for thinking, then by tool: green Bash, blue reads and searches, orange edits, purple web, pink agents. A big tool result is a big meal. |
@@ -20,9 +20,9 @@ A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your to
 | **Hand on its chin** | Claude is thinking, and nothing has streamed yet. |
 | **On fire** | A combo: tool calls landing back to back. From the second, flames engulf it, climbing higher and hotter with every hit and throwing embers. A turn that landed three or more ends in a **K.O.** with confetti; a failed tool call makes it flinch, with a **COUNTER**. |
 | **A happy hop** | A turn finished. Sparkles. |
-| **A yawn, then sleep** | Nothing has happened for three minutes. It wakes when you start typing. |
+| **A yawn, then sleep** | Nothing has happened for three minutes and it is well fed. It wakes when you start typing. |
 | **The sky** | Your local time: dawn, day with drifting clouds, dusk, and night with the moon, stars, the odd shooting star and fireflies. |
-| **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 is over 9000. Its helpers bounce beside it. A belly about to burst or a limit past 80% still shows through. |
+| **Super mode** | Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent (or three tools at once) adds a level; level 2 crackles with lightning, level 3 is over 9000. Each subagent shows up as a little helper in its own color that dances beside it and runs over now and then to toss a token into its mouth. A belly about to burst or a limit past 80% still shows through. |
 
 Under the sprite, a readout gives the exact numbers:
 
@@ -74,10 +74,16 @@ git clone https://github.com/ugglr/claude-token-monster
 claude --plugin-dir ./claude-token-monster
 ```
 
-To get the latest version, then remove it again:
+To update to the latest version:
 
 ```bash
 claude plugin marketplace update token-monster
+claude plugin update token-monster@token-monster
+```
+
+To remove it:
+
+```bash
 claude plugin uninstall token-monster@token-monster
 ```
 

@@ -73,7 +73,7 @@ export const AMBER = 50
 export const RED = 80
 // The context fill, in percent, where the monster is about to burst: time to /compact.
 export const BURST = 90
-// Tool calls closer together than this chain into a combo; the HUD shows it this many frames.
+// Tool calls closer together than this chain into a combo, and the fire burns this many frames after the last.
 export const COMBO_MS = 4000
 const COMBO_FRAMES = 40
 // Frames (at 10 a second) of nothing happening before it yawns, then dozes off.
@@ -119,7 +119,7 @@ const TOOL_COLORS: [RegExp, number][] = [
 export const toolColor = (tool: string | undefined) =>
   tool === undefined ? TEXT : (TOOL_COLORS.find(([match]) => match.test(tool))?.[1] ?? TEXT)
 
-export const mix = (a: number, b: number, t: number) => {
+const mix = (a: number, b: number, t: number) => {
   const k = Math.max(0, Math.min(1, t))
   const channel = (shift: number) => {
     const from = (a >> shift) & 255
@@ -234,23 +234,11 @@ export const startTurn = (s: Scene) => {
 // Every finished turn is a little celebration; one that landed a combo of three
 // or more ends in a K.O., however long the answer took.
 export const finishTurn = (s: Scene, isAborted = false) => {
-  if (s.best >= 3) {
-    s.finish = { text: 'K.O.', at: s.tick }
-    for (let i = 0; i < 24; i++) {
-      s.bits.push({
-        kind: 'confetti',
-        x: random() * 64,
-        y: -random() * 8,
-        vx: (random() - 0.5) * 0.4,
-        vy: 0.2 + random() * 0.3,
-        life: 40,
-        max: 40,
-        color: [0xff5a5f, 0xffd23f, 0x5cff8a, 0x5cc8ff, 0xff6fd8][i % 5]!,
-      })
-    }
+  // An interrupted turn gets neither: no K.O., no cheer.
+  if (!isAborted) {
+    if (s.best >= 3) s.finish = { text: 'K.O.', at: s.tick }
+    s.cheerAt = s.tick
   }
-
-  if (!isAborted) s.cheerAt = s.tick
 
   s.busy = false
   s.tools.clear()
@@ -269,7 +257,7 @@ export const settle = (s: Scene) => {
   s.bits = []
 }
 
-export const comboShown = (s: Scene) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES
+const comboShown = (s: Scene) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES
 
 // Whether anything moves beyond breathing and blinking, so a frame is worth painting.
 export const lively = (s: Scene) =>
@@ -296,8 +284,10 @@ const shape = (s: Scene, width: number, height: number) => {
   const monster = s.look.monster
   const eating = s.heat > 0.02
   const quiet = t - s.activeAt
-  const sleeping = !s.busy && !eating && quiet > DOZE
-  const yawning = !s.busy && !eating && quiet > DOZE - YAWN && !sleeping
+  // A hungry monster does not doze off: hunger shows instead (see mood()).
+  const hungry = idle >= SAD
+  const sleeping = !s.busy && !eating && quiet > DOZE && !hungry
+  const yawning = !s.busy && !eating && quiet > DOZE - YAWN && !sleeping && !hungry
   const floor = height - 4
   // Powering up, it tightens to make room for the hair.
   const tight = 1 - s.power * 0.18
@@ -514,6 +504,21 @@ export const step = (s: Scene, width: number, height: number) => {
         life: 22,
         max: 22,
         color: i % 2 ? GOLD_LIGHT : WHITE,
+      })
+    }
+  }
+
+  if (s.finish?.text === 'K.O.' && s.tick - s.finish.at === 1) {
+    for (let i = 0; i < 24; i++) {
+      s.bits.push({
+        kind: 'confetti',
+        x: random() * width,
+        y: -random() * 8,
+        vx: (random() - 0.5) * 0.4,
+        vy: 0.2 + random() * 0.3,
+        life: 40,
+        max: 40,
+        color: [0xff5a5f, 0xffd23f, 0x5cff8a, 0x5cc8ff, 0xff6fd8][i % 5]!,
       })
     }
   }
@@ -741,7 +746,7 @@ const world = (c: Canvas, { t, floor, hour, wave }: Shape) => {
     for (let r = 6; r > 2; r--) c.disc(x, y, r, 0xffd27a, 0.08)
     c.disc(x, y, 2.6, 0xfff1b0)
   } else {
-    const p = ((hour + 6) % 24) / 12 - 1
+    const p = ((hour + 6) % 24) / 12
     const [x, y] = [c.width * (0.12 + 0.76 * clamp(p)), floor - 6 - Math.sin(Math.PI * clamp(p)) * (floor - 10)]
 
     c.disc(x, y, 2.6, 0xf2f0e6)
@@ -903,24 +908,88 @@ const blaze = (c: Canvas, { t, cx, cy, rx, ry, floor, blaze: k, flare }: Shape, 
 }
 
 // A shadow on the ground, fainter the higher it floats; one minion per running subagent.
-const shadow = (c: Canvas, { t, cx, rx, floor, lift, body, power }: Shape, minions: number) => {
+const shadow = (c: Canvas, { cx, rx, floor, lift }: Shape) => {
   for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
     const k = 1 - ((x + 0.5 - cx) / rx) ** 2
 
     if (k > 0) c.put(x, floor, BLACK, 0.45 * k * Math.max(0.2, 1 - lift / 8))
   }
+}
 
-  for (let i = 0; i < Math.min(4, minions); i++) {
-    const x = i % 2 === 0 ? 5 + (i >> 1) * 7 : c.width - 6 - (i >> 1) * 7
-    const hopY = Math.abs(Math.sin(t * 0.5 + i)) * 2.5
-    const y = floor - 3 - hopY
-    const color = mix(mix(body, WHITE, 0.3), GOLD, power * 0.25)
+const HELPERS = [0xff6fd8, 0x5cc8ff, 0xffd23f, 0x5cff8a]
 
-    c.blob(x, y, 3, 2.8 * (1 - (hopY < 0.3 ? 0.15 : 0)), color, (nx, ny) => nx * nx + ny * ny < 1)
-    c.put(x - 1, y - 1, WHITE)
-    c.put(x + 1, y - 1, WHITE)
-    c.put(x - 1, y, INK)
-    c.put(x + 1, y, INK)
+// One helper per running subagent: a mini of the same monster in its own color.
+// They dance in sync at the sides, and by turns run over with a token and toss
+// it into the big one's mouth. Pure: every move is a function of the clock.
+const helpers = (c: Canvas, f: Shape, count: number) => {
+  const { t, monster, cx, rx, floor, mouth, power } = f
+
+  for (let i = 0; i < Math.min(4, count); i++) {
+    const side = i % 2 === 0 ? -1 : 1
+    const home = side < 0 ? 5 + (i >> 1) * 8 : c.width - 6 - (i >> 1) * 8
+    const target = cx + side * (rx + 4)
+    const p = ((t + i * 23) % 70) / 70
+    let x = home
+    let toss = -1
+
+    if (p >= 0.5 && p < 0.65) x = ease(home, target, (p - 0.5) / 0.15)
+    else if (p >= 0.65 && p < 0.75) {
+      x = target
+      toss = (p - 0.65) / 0.1
+    } else if (p >= 0.75) x = ease(target, home, (p - 0.75) / 0.25)
+
+    const running = (p >= 0.5 && p < 0.65) || p >= 0.75
+    const beat = Math.sin(t * 0.6)
+    const hop = running ? Math.abs(Math.sin(t * 1.3 + i)) * 1.5 : Math.abs(beat) * 2.5
+    const float = monster === 'ghost' ? 2 + Math.sin(t * 0.2 + i) : 0
+    const y = floor - 3 - hop - float
+    const color = mix(HELPERS[i]!, GOLD, power * 0.3)
+    const squash = hop < 0.4 && !running ? 0.15 : 0
+    const facing = running ? (p < 0.65 ? -side : side) : 0
+    const mini = (nx: number, ny: number) => {
+      const d = Math.hypot(nx, ny)
+
+      if (monster === 'slime') return d < 1 && ny < 0.8
+      if (monster === 'ghost') return ny < 0 ? d < 1 : Math.abs(nx) < 1 && ny < 1 + 0.25 * Math.sin(nx * 6 + t * 0.6)
+      if (monster === 'cookie') return d < 1 + 0.12 * Math.sin(Math.atan2(ny, nx) * 9)
+
+      return d < 1
+    }
+
+    c.blob(x, y, 3.2 * (1 + squash), 2.9 * (1 - squash), color, mini)
+
+    if (monster === 'gremlin') {
+      c.put(x - 2, y - 3.5, 0xeadfc8)
+      c.put(x + 2, y - 3.5, 0xeadfc8)
+    }
+
+    // Dancing arms, up on the beat; carrying arms reach up to the token.
+    const armUp = running || toss >= 0 ? 1 : beat > 0 ? 1 : 0
+
+    if (monster !== 'ghost') {
+      c.put(x - 3.5, y - armUp * 1.5, mix(color, INK, 0.3))
+      c.put(x + 3.5, y - (1 - armUp) * 1.5 - (running ? 1.5 : 0), mix(color, INK, 0.3))
+    }
+
+    // Eyes look the way it runs, or at you while it dances.
+    const [ey, gaze] = [monster === 'cookie' ? y - 2.5 : y - 0.8, facing * 0.6]
+
+    c.put(x - 1, ey, WHITE)
+    c.put(x + 1, ey, WHITE)
+    c.put(x - 1 + gaze, ey + 0.4, INK)
+    c.put(x + 1 + gaze, ey + 0.4, INK)
+
+    if (p >= 0.5 && p < 0.65) {
+      c.disc(x, y - 4.5, 1, TEXT)
+      c.add(x, y - 4.5, 0xffffff, 0.4)
+    }
+
+    if (toss >= 0) {
+      const [tx, ty] = [ease(x, mouth.x, toss), ease(y - 4.5, mouth.y, toss) - Math.sin(Math.PI * toss) * 6]
+
+      c.disc(tx, ty, 1, TEXT)
+      c.add(tx, ty, 0xffffff, 0.5)
+    }
   }
 }
 
@@ -1353,10 +1422,11 @@ export const paint = (s: Scene, width: number, height: number): Uint32Array => {
   glow(c, f, s.pantry.length > 0)
   aura(c, f, s.flashAt)
   blaze(c, f, false)
-  shadow(c, f, s.minions)
+  shadow(c, f)
   torso(c, f)
   limbs(c, f, s)
   blaze(c, f, true)
+  helpers(c, f, s.minions)
   hair(c, f)
   face(c, f, s)
 

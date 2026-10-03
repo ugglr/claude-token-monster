@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { createScene, finishTurn, hit, startTurn } from '../hooks/paint'
+import { createScene, finishTurn, hit, paint, startTurn, step } from '../hooks/paint'
 import type { On, SessionContextUsage } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
@@ -425,4 +425,42 @@ test('with the pane placed, the band is left to others', async ($, on) => {
   await measure($, 60_000)
 
   expect(await (await band($)).find({ type: 'Text', text: /nom/ })).toBeUndefined()
+})
+
+const fed = (fedAt: number) => ({ percent: 30, fill: 30, tokens: 1, window: 1, ate: 0, fedAt, burpAt: null, known: true, compactAt: null })
+
+test('the moon is up at night', () => {
+  for (const hour of [21, 0, 3]) {
+    const s = createScene({ monster: 'cookie', color: 'blue' })
+
+    s.hour = hour
+    const px = paint(s, 64, 44)
+
+    expect([...px].filter(color => color === 0xf2f0e6).length).toBeGreaterThan(5)
+  }
+})
+
+test('a fed monster dozes off when nothing happens; a hungry one stays up, sad', () => {
+  const dozes = createScene({ monster: 'cookie', color: 'blue' })
+
+  dozes.belly = fed(0)
+  for (let i = 0; i < 1900; i++) step(dozes, 64, 44)
+  expect(dozes.bits.some(bit => bit.kind === 'z')).toBe(true)
+
+  const hungry = createScene({ monster: 'cookie', color: 'blue' })
+
+  hungry.belly = fed(-20 * 60_000)
+  for (let i = 0; i < 1900; i++) step(hungry, 64, 44)
+  expect(hungry.bits.some(bit => bit.kind === 'z')).toBe(false)
+  expect(hungry.smile).toBeLessThan(-0.5)
+})
+
+test('an interrupted turn gets no K.O. and no cheer', () => {
+  const s = createScene({ monster: 'cookie', color: 'blue' })
+
+  startTurn(s)
+  ;[0, 500, 1000].forEach(at => hit(s, false, at))
+  finishTurn(s, true)
+  expect(s.finish).toBeNull()
+  expect(s.cheerAt).toBe(-100)
 })
