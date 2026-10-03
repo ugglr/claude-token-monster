@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Monster: a pixel pet for Claude Code that eats your tokens</title>
+<meta name="description" content="A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your tokens. Its size, face and glow show your context, your limits and what Claude is doing.">
+<meta property="og:title" content="Token Monster">
+<meta property="og:description" content="A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your tokens.">
+<meta property="og:image" content="https://ugglr.github.io/claude-token-monster/moods.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0e0c24">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%233d7bff' d='M1 2h6v5H1z'/%3E%3Cpath fill='%23fff' d='M2 1h2v2H2zM4 1h2v2H4z'/%3E%3Cpath fill='%231a0f24' d='M3 2h1v1H3zM5 2h1v1H5zM2 4h4v2H2z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="site.js"></script>
+</head>
+<body>
+<a class="skip" href="#read">Skip to how it works</a>
+
+<header class="topbar">
+  <span class="topbar-name"><span class="spark" aria-hidden="true">✻</span> token monster</span>
+  <nav aria-label="Sections">
+    <a href="#read">read it</a>
+    <a href="#diet">diet</a>
+    <a href="#install">install</a>
+    <a href="#sees">what it sees</a>
+    <a href="https://github.com/ugglr/claude-token-monster">github</a>
+  </nav>
+  <span class="topbar-sky" data-sky>night</span>
+</header>
+
+<main>
+  <section class="hero" aria-labelledby="title">
+    <figure class="session">
+      <div class="session-main">
+        <div class="welcome">
+          <p class="welcome-title"><span class="spark" aria-hidden="true">✻</span> a mod for Claude Code</p>
+          <h1 id="title"><svg class="wordmark" shape-rendering="crispEdges" viewBox="0 0 41.5 16.5" role="img" aria-label="Token Monster"><path class="wm-shadow" transform="translate(.5 .5)" d="M0 0h1v1h-1zM1 0h1v1h-1zM2 0h1v1h-1zM3 0h1v1h-1zM4 0h1v1h-1zM2 1h1v1h-1zM2 2h1v1h-1zM2 3h1v1h-1zM2 4h1v1h-1zM2 5h1v1h-1zM2 6h1v1h-1zM7 0h1v1h-1zM8 0h1v1h-1zM9 0h1v1h-1zM6 1h1v1h-1zM10 1h1v1h-1zM6 2h1v1h-1zM10 2h1v1h-1zM6 3h1v1h-1zM10 3h1v1h-1zM6 4h1v1h-1zM10 4h1v1h-1zM6 5h1v1h-1zM10 5h1v1h-1zM7 6h1v1h-1zM8 6h1v1h-1zM9 6h1v1h-1zM12 0h1v1h-1zM16 0h1v1h-1zM12 1h1v1h-1zM15 1h1v1h-1zM12 2h1v1h-1zM14 2h1v1h-1zM12 3h1v1h-1zM13 3h1v1h-1zM12 4h1v1h-1zM14 4h1v1h-1zM12 5h1v1h-1zM15 5h1v1h-1zM12 6h1v1h-1zM16 6h1v1h-1zM18 0h1v1h-1zM19 0h1v1h-1zM20 0h1v1h-1zM21 0h1v1h-1zM22 0h1v1h-1zM18 1h1v1h-1zM18 2h1v1h-1zM18 3h1v1h-1zM19 3h1v1h-1zM20 3h1v1h-1zM21 3h1v1h-1zM18 4h1v1h-1zM18 5h1v1h-1zM18 6h1v1h-1zM19 6h1v1h-1zM20 6h1v1h-1zM21 6h1v1h-1zM22 6h1v1h-1zM24 0h1v1h-1zM28 0h1v1h-1zM24 1h1v1h-1zM25 1h1v1h-1zM28 1h1v1h-1zM24 2h1v1h-1zM26 2h1v1h-1zM28 2h1v1h-1zM24 3h1v1h-1zM26 3h1v1h-1zM28 3h1v1h-1zM24 4h1v1h-1zM27 4h1v1h-1zM28 4h1v1h-1zM24 5h1v1h-1zM28 5h1v1h-1zM24 6h1v1h-1zM28 6h1v1h-1zM0 9h1v1h-1zM4 9h1v1h-1zM0 10h1v1h-1zM1 10h1v1h-1zM3 10h1v1h-1zM4 10h1v1h-1zM0 11h1v1h-1zM2 11h1v1h-1zM4 11h1v1h-1zM0 12h1v1h-1zM2 12h1v1h-1zM4 12h1v1h-1zM0 13h1v1h-1zM4 13h1v1h-1zM0 14h1v1h-1zM4 14h1v1h-1zM0 15h1v1h-1zM4 15h1v1h-1zM7 9h1v1h-1zM8 9h1v1h-1zM9 9h1v1h-1zM6 10h1v1h-1zM10 10h1v1h-1zM6 11h1v1h-1zM10 11h1v1h-1zM6 12h1v1h-1zM10 12h1v1h-1zM6 13h1v1h-1zM10 13h1v1h-1zM6 14h1v1h-1zM10 14h1v1h-1zM7 15h1v1h-1zM8 15h1v1h-1zM9 15h1v1h-1zM12 9h1v1h-1zM16 9h1v1h-1zM12 10h1v1h-1zM13 10h1v1h-1zM16 10h1v1h-1zM12 11h1v1h-1zM14 11h1v1h-1zM16 11h1v1h-1zM12 12h1v1h-1zM14 12h1v1h-1zM16 12h1v1h-1zM12 13h1v1h-1zM15 13h1v1h-1zM16 13h1v1h-1zM12 14h1v1h-1zM16 14h1v1h-1zM12 15h1v1h-1zM16 15h1v1h-1zM19 9h1v1h-1zM20 9h1v1h-1zM21 9h1v1h-1zM22 9h1v1h-1zM18 10h1v1h-1zM18 11h1v1h-1zM19 12h1v1h-1zM20 12h1v1h-1zM21 12h1v1h-1zM22 13h1v1h-1zM22 14h1v1h-1zM18 15h1v1h-1zM19 15h1v1h-1zM20 15h1v1h-1zM21 15h1v1h-1zM24 9h1v1h-1zM25 9h1v1h-1zM26 9h1v1h-1zM27 9h1v1h-1zM28 9h1v1h-1zM26 10h1v1h-1zM26 11h1v1h-1zM26 12h1v1h-1zM26 13h1v1h-1zM26 14h1v1h-1zM26 15h1v1h-1zM30 9h1v1h-1zM31 9h1v1h-1zM32 9h1v1h-1zM33 9h1v1h-1zM34 9h1v1h-1zM30 10h1v1h-1zM30 11h1v1h-1zM30 12h1v1h-1zM31 12h1v1h-1zM32 12h1v1h-1zM33 12h1v1h-1zM30 13h1v1h-1zM30 14h1v1h-1zM30 15h1v1h-1zM31 15h1v1h-1zM32 15h1v1h-1zM33 15h1v1h-1zM34 15h1v1h-1zM36 9h1v1h-1zM37 9h1v1h-1zM38 9h1v1h-1zM39 9h1v1h-1zM36 10h1v1h-1zM40 10h1v1h-1zM36 11h1v1h-1zM40 11h1v1h-1zM36 12h1v1h-1zM37 12h1v1h-1zM38 12h1v1h-1zM39 12h1v1h-1zM36 13h1v1h-1zM38 13h1v1h-1zM36 14h1v1h-1zM39 14h1v1h-1zM36 15h1v1h-1zM40 15h1v1h-1z"/><path class="wm-face" d="M0 0h1v1h-1zM1 0h1v1h-1zM2 0h1v1h-1zM3 0h1v1h-1zM4 0h1v1h-1zM2 1h1v1h-1zM2 2h1v1h-1zM2 3h1v1h-1zM2 4h1v1h-1zM2 5h1v1h-1zM2 6h1v1h-1zM7 0h1v1h-1zM8 0h1v1h-1zM9 0h1v1h-1zM6 1h1v1h-1zM10 1h1v1h-1zM6 2h1v1h-1zM10 2h1v1h-1zM6 3h1v1h-1zM10 3h1v1h-1zM6 4h1v1h-1zM10 4h1v1h-1zM6 5h1v1h-1zM10 5h1v1h-1zM7 6h1v1h-1zM8 6h1v1h-1zM9 6h1v1h-1zM12 0h1v1h-1zM16 0h1v1h-1zM12 1h1v1h-1zM15 1h1v1h-1zM12 2h1v1h-1zM14 2h1v1h-1zM12 3h1v1h-1zM13 3h1v1h-1zM12 4h1v1h-1zM14 4h1v1h-1zM12 5h1v1h-1zM15 5h1v1h-1zM12 6h1v1h-1zM16 6h1v1h-1zM18 0h1v1h-1zM19 0h1v1h-1zM20 0h1v1h-1zM21 0h1v1h-1zM22 0h1v1h-1zM18 1h1v1h-1zM18 2h1v1h-1zM18 3h1v1h-1zM19 3h1v1h-1zM20 3h1v1h-1zM21 3h1v1h-1zM18 4h1v1h-1zM18 5h1v1h-1zM18 6h1v1h-1zM19 6h1v1h-1zM20 6h1v1h-1zM21 6h1v1h-1zM22 6h1v1h-1zM24 0h1v1h-1zM28 0h1v1h-1zM24 1h1v1h-1zM25 1h1v1h-1zM28 1h1v1h-1zM24 2h1v1h-1zM26 2h1v1h-1zM28 2h1v1h-1zM24 3h1v1h-1zM26 3h1v1h-1zM28 3h1v1h-1zM24 4h1v1h-1zM27 4h1v1h-1zM28 4h1v1h-1zM24 5h1v1h-1zM28 5h1v1h-1zM24 6h1v1h-1zM28 6h1v1h-1zM0 9h1v1h-1zM4 9h1v1h-1zM0 10h1v1h-1zM1 10h1v1h-1zM3 10h1v1h-1zM4 10h1v1h-1zM0 11h1v1h-1zM2 11h1v1h-1zM4 11h1v1h-1zM0 12h1v1h-1zM2 12h1v1h-1zM4 12h1v1h-1zM0 13h1v1h-1zM4 13h1v1h-1zM0 14h1v1h-1zM4 14h1v1h-1zM0 15h1v1h-1zM4 15h1v1h-1zM7 9h1v1h-1zM8 9h1v1h-1zM9 9h1v1h-1zM6 10h1v1h-1zM10 10h1v1h-1zM6 11h1v1h-1zM10 11h1v1h-1zM6 12h1v1h-1zM10 12h1v1h-1zM6 13h1v1h-1zM10 13h1v1h-1zM6 14h1v1h-1zM10 14h1v1h-1zM7 15h1v1h-1zM8 15h1v1h-1zM9 15h1v1h-1zM12 9h1v1h-1zM16 9h1v1h-1zM12 10h1v1h-1zM13 10h1v1h-1zM16 10h1v1h-1zM12 11h1v1h-1zM14 11h1v1h-1zM16 11h1v1h-1zM12 12h1v1h-1zM14 12h1v1h-1zM16 12h1v1h-1zM12 13h1v1h-1zM15 13h1v1h-1zM16 13h1v1h-1zM12 14h1v1h-1zM16 14h1v1h-1zM12 15h1v1h-1zM16 15h1v1h-1zM19 9h1v1h-1zM20 9h1v1h-1zM21 9h1v1h-1zM22 9h1v1h-1zM18 10h1v1h-1zM18 11h1v1h-1zM19 12h1v1h-1zM20 12h1v1h-1zM21 12h1v1h-1zM22 13h1v1h-1zM22 14h1v1h-1zM18 15h1v1h-1zM19 15h1v1h-1zM20 15h1v1h-1zM21 15h1v1h-1zM24 9h1v1h-1zM25 9h1v1h-1zM26 9h1v1h-1zM27 9h1v1h-1zM28 9h1v1h-1zM26 10h1v1h-1zM26 11h1v1h-1zM26 12h1v1h-1zM26 13h1v1h-1zM26 14h1v1h-1zM26 15h1v1h-1zM30 9h1v1h-1zM31 9h1v1h-1zM32 9h1v1h-1zM33 9h1v1h-1zM34 9h1v1h-1zM30 10h1v1h-1zM30 11h1v1h-1zM30 12h1v1h-1zM31 12h1v1h-1zM32 12h1v1h-1zM33 12h1v1h-1zM30 13h1v1h-1zM30 14h1v1h-1zM30 15h1v1h-1zM31 15h1v1h-1zM32 15h1v1h-1zM33 15h1v1h-1zM34 15h1v1h-1zM36 9h1v1h-1zM37 9h1v1h-1zM38 9h1v1h-1zM39 9h1v1h-1zM36 10h1v1h-1zM40 10h1v1h-1zM36 11h1v1h-1zM40 11h1v1h-1zM36 12h1v1h-1zM37 12h1v1h-1zM38 12h1v1h-1zM39 12h1v1h-1zM36 13h1v1h-1zM38 13h1v1h-1zM36 14h1v1h-1zM39 14h1v1h-1zM36 15h1v1h-1zM40 15h1v1h-1z"/></svg></h1>
+          <div class="welcome-copy">
+            <p class="lede">A pixel-art Tamagotchi that lives in a side pane of Claude Code and eats your tokens.</p>
+            <p>It is also a dashboard: one glance at the monster tells you how full your context is, how close you are to your limits, and what Claude is doing right now.</p>
+          </div>
+        </div>
+        <div class="session-log" aria-hidden="true">
+          <ol class="log" data-log><li class="l-prompt">/token-monster</li><li class="l-result">Token Monster is hungry.</li></ol>
+        </div>
+      </div>
+      <div class="pane pane-hero" data-pet="hero">
+        <p class="pane-title" aria-hidden="true">token monster</p>
+        <button class="screen" type="button" aria-label="Feed the monster a combo"><canvas></canvas></button>
+        <pre class="readout" data-readout aria-hidden="true"></pre>
+      </div>
+      <figcaption class="session-caption">A live session: Claude reads, runs and edits, and the monster in the side pane eats every token as it streams. It is the mod's own renderer, running in your browser. Click it, or type in the prompt at the bottom.</figcaption>
+    </figure>
+
+    <div class="hero-install">
+      <div class="cmd">
+        <pre><code>/plugin marketplace add ugglr/claude-token-monster
+/plugin install token-monster@token-monster</code></pre>
+        <button class="copy" type="button" data-copy="/plugin marketplace add ugglr/claude-token-monster&#10;/plugin install token-monster@token-monster">Copy</button>
+      </div>
+      <p class="hero-links">
+        <a href="#install">Other ways to install</a>
+        <a href="https://github.com/ugglr/claude-token-monster">Read the source</a>
+        <a class="dad" href="https://github.com/ugglr/dad"><span>Dad</span><span>approved</span></a>
+      </p>
+    </div>
+  </section>
+
+  <section class="turn" id="read" aria-labelledby="read-h">
+    <h2 id="read-h"><span class="caret" aria-hidden="true">&gt;</span> how do I read the monster?</h2>
+    <div class="read-grid">
+      <div class="answer">
+        <p class="claude"><span class="bullet" aria-hidden="true">⏺</span> Every part of it is a gauge. Pick a row to see it on the specimen.</p>
+        <div class="table" role="group" aria-label="What you see, and what it means">
+          <button type="button" class="row" data-state="size" aria-pressed="true"><span class="see">Its size</span><span class="means">How full the context window is. The belly inflates as the context fills.</span></button>
+          <button type="button" class="row" data-state="face" aria-pressed="false"><span class="see">Its face</span><span class="means">Its mood: hungry, happy, stuffed past 75%, dizzy eyes past 90% (time to <code>/compact</code>), a happy squint after a burp. These go by the point where Claude Code auto-compacts, which comes well before the window is full.</span></button>
+          <button type="button" class="row" data-state="tears" aria-pressed="false"><span class="see">Tears, then sleepy Zs</span><span class="means">Sad after 15 minutes without tokens, starving after an hour. Feed it to cheer it up.</span></button>
+          <button type="button" class="row" data-state="glow" aria-pressed="false"><span class="see">The glow around it</span><span class="means">Your session and weekly limits: green with room to spare, amber past 50%, pulsing red past 80%. It sweats when you get close.</span></button>
+          <button type="button" class="row" data-state="chew" aria-pressed="false"><span class="see">How hard it chews</span><span class="means">How fast tokens are flowing right now. Still when nothing streams, nibbling as Claude starts writing, shoveling with both hands as the rate climbs.</span></button>
+          <button type="button" class="row" data-state="tokens" aria-pressed="false"><span class="see">Tokens flying into its mouth</span><span class="means">The actual stream: <i class="t-text">gold for text</i>, <i class="t-think">lilac for thinking</i>, then by tool: <i class="t-bash">green Bash</i>, <i class="t-read">blue reads and searches</i>, <i class="t-edit">orange edits</i>, <i class="t-web">purple web</i>, <i class="t-agent">pink agents</i>.</span></button>
+          <button type="button" class="row" data-state="typing" aria-pressed="false"><span class="see">Rubbing its hands, drooling</span><span class="means">You are typing. It perks up when you send the prompt, which floats up into its mouth.</span></button>
+          <button type="button" class="row" data-state="thinking" aria-pressed="false"><span class="see">Hand on its chin</span><span class="means">Claude is thinking, and nothing has streamed yet.</span></button>
+          <button type="button" class="row" data-state="fire" aria-pressed="false"><span class="see">On fire</span><span class="means">A combo: tool calls landing back to back. Flames climb higher with every hit. Three or more end the turn in a K.O.; a failed tool call makes it flinch, with a COUNTER.</span></button>
+          <button type="button" class="row" data-state="hop" aria-pressed="false"><span class="see">A happy hop</span><span class="means">A turn finished. Sparkles.</span></button>
+          <button type="button" class="row" data-state="sleep" aria-pressed="false"><span class="see">A yawn, then sleep</span><span class="means">Nothing has happened for three minutes. It wakes when you start typing.</span></button>
+          <button type="button" class="row" data-state="sky" aria-pressed="false"><span class="see">The sky</span><span class="means">Your local time: dawn, day with drifting clouds, dusk, and night with the moon, stars, the odd shooting star and fireflies.</span></button>
+          <button type="button" class="row" data-state="super" aria-pressed="false"><span class="see">Super mode</span><span class="means">Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent adds a level, and its helpers bounce beside it.</span></button>
+        </div>
+      </div>
+      <div class="specimen-wrap">
+        <div class="pane pane-specimen" data-pet="specimen">
+          <p class="pane-title" aria-hidden="true">specimen</p>
+          <button class="screen" type="button" aria-label="Replay this state"><canvas></canvas></button>
+          <pre class="readout" data-readout aria-hidden="true"></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="turn" id="diet" aria-labelledby="diet-h">
+    <h2 id="diet-h"><span class="caret" aria-hidden="true">&gt;</span> /token-monster diet</h2>
+    <div class="diet-grid">
+      <div class="answer">
+        <p class="claude"><span class="bullet" aria-hidden="true">⏺</span> Today you can only <code>/clear</code> or <code>/compact</code> the whole conversation. The diet lets you pick what goes.</p>
+        <p>Press <kbd>d</kbd> in the pane to list the biggest tool results sitting in this conversation's context right now: file reads, command output, web pages. Tick the ones you no longer need and press <kbd>e</kbd> to eat.</p>
+        <p>Eat puts <code>/compact</code> in your prompt. Press Enter, and instead of summarizing the conversation, Token Monster replaces each picked result with a short note, so the model knows something was there and can run the tool again if it needs it. Every other message stays exactly as it was.</p>
+        <p class="dim">An automatic compaction is never touched, and Cancel disarms it.</p>
+      </div>
+      <div class="diet-demo">
+        <div class="pane pane-small pane-buddy" data-pet="diet">
+          <button class="screen" type="button" aria-label="Feed the slime"><canvas></canvas></button>
+          <p class="say" data-say></p>
+        </div>
+        <div class="pane pane-diet" data-diet tabindex="-1">
+          <p class="pane-title" aria-hidden="true">diet</p>
+          <p class="d-strong">Free up this conversation's context</p>
+          <p class="dim">These tool results sit in the context right now. Pick what me eat, biggest first.</p>
+          <p data-diet-context>context 71% 142k/200k</p>
+          <ul class="dishes" data-dishes></ul>
+          <p class="armed" data-armed hidden>Armed: eating ~<span data-plate></span> tokens from the context on your next /compact <button type="button" class="key" data-cancel>Cancel</button></p>
+          <p class="diet-actions"><button type="button" class="key" data-eat>Eat</button> <button type="button" class="key" data-refill hidden>Serve them again</button></p>
+          <p class="dim small">1-9 pick, e eat. Eat puts /compact in your prompt; Enter removes them from the context, each left as a short note.</p>
+          <div class="mini-prompt" data-compact hidden>
+            <span class="caret" aria-hidden="true">&gt;</span> <span>/compact</span>
+            <button type="button" class="key" data-enter>Press Enter</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="turn" id="install" aria-labelledby="install-h">
+    <h2 id="install-h"><span class="caret" aria-hidden="true">&gt;</span> how do I install it?</h2>
+    <div class="install-grid">
+      <div class="answer">
+        <p class="claude"><span class="bullet" aria-hidden="true">⏺</span> Inside Claude Code:</p>
+        <div class="cmd">
+          <pre><code>/plugin marketplace add ugglr/claude-token-monster
+/plugin install token-monster@token-monster</code></pre>
+          <button class="copy" type="button" data-copy="/plugin marketplace add ugglr/claude-token-monster&#10;/plugin install token-monster@token-monster">Copy</button>
+        </div>
+        <p>Or from your terminal:</p>
+        <div class="cmd">
+          <pre><code>claude plugin marketplace add ugglr/claude-token-monster
+claude plugin install token-monster@token-monster</code></pre>
+          <button class="copy" type="button" data-copy="claude plugin marketplace add ugglr/claude-token-monster&#10;claude plugin install token-monster@token-monster">Copy</button>
+        </div>
+        <p>Start a new Claude Code session and the monster moves in. Or try it for one session without installing:</p>
+        <div class="cmd">
+          <pre><code>git clone https://github.com/ugglr/claude-token-monster
+claude --plugin-dir ./claude-token-monster</code></pre>
+          <button class="copy" type="button" data-copy="git clone https://github.com/ugglr/claude-token-monster&#10;claude --plugin-dir ./claude-token-monster">Copy</button>
+        </div>
+        <p>To update it, or remove it again:</p>
+        <div class="cmd">
+          <pre><code>claude plugin marketplace update token-monster
+claude plugin uninstall token-monster@token-monster</code></pre>
+          <button class="copy" type="button" data-copy="claude plugin marketplace update token-monster&#10;claude plugin uninstall token-monster@token-monster">Copy</button>
+        </div>
+
+        <h3>Use it</h3>
+        <p>The pane opens by itself when the terminal is at least 144 columns wide. At any width, run <code>/token-monster</code>. Focus the pane with <kbd>ctrl+x tab</kbd>, then press <kbd>m</kbd> to swap the monster, <kbd>c</kbd> to swap the color, and <kbd>d</kbd> for the diet. Or name them:</p>
+        <pre class="plain"><code>/token-monster slime green
+/token-monster gremlin
+/token-monster diet</code></pre>
+        <p>The desktop app and IDEs show an ASCII version of the monster with the same readout. When the pane cannot show, a one-line version sits above the prompt, like the one at the bottom of this page.</p>
+
+        <h3>Requirements</h3>
+        <ul class="dash">
+          <li>Claude Code 2.1.287 or later, where mods load by default. Built and tested on 2.1.288.</li>
+          <li>A terminal for the pixel art. It looks best with 24-bit color (iTerm2, Ghostty, WezTerm, Kitty); a terminal that rounds to 256 colors shows it flatter.</li>
+          <li>No environment variables, packages or configuration.</li>
+        </ul>
+      </div>
+      <div class="strays">
+        <div class="pane pane-small stray" data-pet="stray-super">
+          <button class="screen" type="button" aria-label="Feed the gremlin"><canvas></canvas></button>
+          <p class="say" data-say></p>
+        </div>
+        <div class="pane pane-small stray stray-low" data-pet="stray-sad">
+          <button class="screen" type="button" aria-label="Feed the yellow cookie"><canvas></canvas></button>
+          <p class="say" data-say></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="turn" id="sees" aria-labelledby="sees-h">
+    <h2 id="sees-h"><span class="caret" aria-hidden="true">&gt;</span> what can it see?</h2>
+    <div class="sees-grid">
+      <div class="answer">
+        <p class="claude"><span class="bullet" aria-hidden="true">⏺</span> Mods are not sandboxed, so read the code before you install any mod. Here is everything this one sees:</p>
+        <ul class="dash">
+          <li><strong>The model's response stream</strong>, as it arrives, for the main conversation and every subagent: text, thinking, and the arguments of each tool call. It measures their length to animate the monster and keeps nothing.</li>
+          <li><strong>The text of each prompt you send</strong>, and <strong>each tool result</strong>, subagents' included, measured the same way.</li>
+          <li><strong>The context, limit and cost figures</strong> Claude Code already shows in its status line.</li>
+          <li><strong>Each tool call's name</strong> and its file path, description, command, URL, search pattern or query, or prompt, shown in the readout and kept in the diet's list for the session.</li>
+          <li><strong>Your prompt while you type it</strong>, only to notice that you are typing.</li>
+          <li><strong>The conversation's tool results</strong>, when you open the diet, to list them; and on a diet <code>/compact</code>, the conversation, to replace the results you picked.</li>
+        </ul>
+        <p class="result"><span aria-hidden="true">⎿ </span>It stores only your monster and color choice, and sends nothing anywhere: there is no network call in the code.</p>
+        <p class="dim">Token counts from the stream, tool results and the diet are estimates, at about four characters a token. The context, limit and cost figures are Claude Code's own.</p>
+      </div>
+      <div class="strays">
+        <div class="pane pane-small stray stray-mid" data-pet="stray-sleep">
+          <button class="screen" type="button" aria-label="Wake the ghost"><canvas></canvas></button>
+          <p class="say" data-say></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="turn" id="cast" aria-labelledby="cast-h">
+    <h2 id="cast-h"><span class="caret" aria-hidden="true">&gt;</span> who can I adopt?</h2>
+    <p class="claude"><span class="bullet" aria-hidden="true">⏺</span> Four monsters in seven colors. Your pick is remembered across sessions. Click one to feed it.</p>
+    <div class="cast">
+      <div class="pane pane-cast" data-pet="cast-cookie">
+        <button class="screen" type="button" aria-label="Feed the cookie"><canvas></canvas></button>
+        <p class="cast-name"><code data-name>/token-monster cookie blue</code></p>
+        <button type="button" class="key" data-color>Color</button>
+      </div>
+      <div class="pane pane-cast" data-pet="cast-slime">
+        <button class="screen" type="button" aria-label="Feed the slime"><canvas></canvas></button>
+        <p class="cast-name"><code data-name>/token-monster slime green</code></p>
+        <button type="button" class="key" data-color>Color</button>
+      </div>
+      <div class="pane pane-cast" data-pet="cast-ghost">
+        <button class="screen" type="button" aria-label="Feed the ghost"><canvas></canvas></button>
+        <p class="cast-name"><code data-name>/token-monster ghost magenta</code></p>
+        <button type="button" class="key" data-color>Color</button>
+      </div>
+      <div class="pane pane-cast" data-pet="cast-gremlin">
+        <button class="screen" type="button" aria-label="Feed the gremlin"><canvas></canvas></button>
+        <p class="cast-name"><code data-name>/token-monster gremlin red</code></p>
+        <button type="button" class="key" data-color>Color</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <p>MIT license. By Carl Igelström, built with Claude Code. <a href="https://github.com/ugglr/claude-token-monster">github.com/ugglr/claude-token-monster</a></p>
+</footer>
+
+<form class="promptbar" data-prompt autocomplete="off">
+  <p class="band" data-band aria-hidden="true"></p>
+  <div class="prompt-box">
+    <label for="feed" class="caret">&gt;</label>
+    <input id="feed" name="feed" type="text" maxlength="200" placeholder="Type to feed the monsters" aria-label="Type to feed the monsters, Enter to send" enterkeyhint="send">
+  </div>
+</form>
+<p class="sr-only" aria-live="polite" data-announce></p>
+</body>
+</html>
