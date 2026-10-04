@@ -38,7 +38,7 @@ Or by name: `/token-monster slime green`, `/token-monster diet`, `/token-monster
 - **Fed up:** the same tool call (same tool, same file or command) failed twice in a row. It crosses its arms under a throbbing anger mark for a few seconds. It only shows; Claude is never told.
 - **Super mode:** subagents running. Each one shows up as a little helper that feeds it. With the rate pegged too, it goes into a full frenzy.
 - **Calling you:** Claude is waiting on you, at a permission dialog or a question. It waves both hands and hops, a ! blinks beside its head, and the readout names the call; with sound on, one soft chime. It stops when you answer.
-- **Cold leftovers:** a frosted bowl with a snowflake beside it. The prompt cache has lapsed since Claude's last response (after 5 minutes, or an hour once it sees your session keeps it that long), so the readout estimates how many tokens your next prompt re-reads uncached.
+- **Cold leftovers:** a frosted bowl with a snowflake beside it. The prompt cache has lapsed since Claude's last request (after 5 minutes, or an hour once it sees your session keeps it that long), so the readout estimates how many tokens your next prompt re-reads uncached.
 - **Levels:** it grows with every token it eats, across sessions, and earns a bow tie, a propeller cap, a crown, a cape and a halo. Each session starts with an egg.
 
 It also sleeps when nothing happens, waves when you come back, and does little antics while it waits.
@@ -51,7 +51,8 @@ Today you can only `/clear` or `/compact` the whole conversation. Press `d` to l
 
 Mods are not sandboxed, so read the code before you install any mod. This one reads:
 
-- the model's response stream (text, thinking, tool arguments, and the token and cache counts of each response), your prompts and each tool result, for the main conversation and subagents, measured for length and not kept
+- the model's response stream (text, thinking, tool arguments), your prompts and each tool result, for the main conversation and subagents, measured for length and not kept
+- the token and cache counts of each main conversation response, kept for the session with when its request was sent, to tell when the prompt cache goes cold
 - each tool call's name and its file path, description, command, URL, search pattern or prompt, shown in the readout and the diet
 - the status line's context, limit and cost figures, and the `/context` breakdown with the auto-compact point (a local estimate, no request)
 - the running subagents, and the `COLORTERM` variable to pick colors

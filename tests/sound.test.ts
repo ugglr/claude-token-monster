@@ -36,8 +36,15 @@ const world = (on: On, stored: Record<string, unknown> = {}) => {
   on('turn.complete', () => ({ text: '' }))
   on('prompt.edit', (_, e) => ({ text: e.text, cursor: e.cursor }))
   on('classic.PermissionRequest', () => ({}))
-  on('tool.call', (_, e) => {
-    const input = e as unknown as { file_path?: string }
+  // `npm test` opens a dialog and holds until the person answers.
+  on('tool.call', async (_, e) => {
+    const input = e as unknown as { file_path?: string; command?: string }
+
+    if (input.command === 'npm test') {
+      await engine.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } } as never)
+      opened()
+      await answer
+    }
 
     return { result: {}, text: 'x'.repeat(input.file_path === 'big.ts' ? 100_000 : 400), isError: input.file_path === 'missing.ts' } as never
   })
@@ -47,9 +54,27 @@ const world = (on: On, stored: Record<string, unknown> = {}) => {
 
 const read = ($: Engine, file_path: string) => call($, { tool: 'Read', file_path })
 
-// The engine putting `npm test` to the person, and the person answering it.
-const asks = ($: Engine) => $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } } as never)
-const answers = ($: Engine) => call($, { tool: 'Bash', command: 'npm test' })
+let engine: Engine
+let opened = () => {}
+let answer = Promise.resolve()
+let running: Promise<unknown> = Promise.resolve()
+
+// Claude runs `npm test` and the engine asks the person about it; then they answer.
+const asks = async ($: Engine) => {
+  let go = () => {}
+
+  engine = $
+  answer = new Promise<void>(resolve => (go = resolve))
+  const there = new Promise<void>(resolve => (opened = resolve))
+
+  running = call($, { tool: 'Bash', command: 'npm test' })
+  await there
+  answers = async () => {
+    go()
+    await running
+  }
+}
+let answers = async () => {}
 
 const measure = ($: Engine, tokens: number) =>
   $.session.measure({ context: { tokens, window: 200_000, percent: Math.round(tokens / 2000) }, rateLimits: [], changed: ['context'] })
@@ -86,7 +111,7 @@ test('sound is off by default, and then nothing plays, a wait included', async (
   expect((await ui.find({ key: 'sound' }))?.props).toMatchObject({ hotkey: 's', plain: true })
 
   await asks($)
-  await answers($)
+  await answers()
   expect(played).toEqual([])
 })
 
@@ -139,12 +164,14 @@ test('with sound on, Claude starting to wait on you chimes once, quietly, pane s
   await asks($)
   expect(played.splice(0)).toEqual(['sounds/call.wav'])
 
-  // A second dialog while it still waits is the same wait.
+  // A second call asked about while it still waits is the same wait.
+  const first = answers
+
   await asks($)
-  await answers($)
+  await answers()
+  await first()
   expect(played.splice(0)).toEqual([])
 
-  await answers($)
   await clock.advance(10_000)
   await asks($)
   expect(played.splice(0)).toEqual(['sounds/call.wav'])

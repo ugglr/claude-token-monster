@@ -2,7 +2,7 @@
 // hooks/paint.ts, compiled to paint.js (the command is at the top of that file).
 // Each one gets its own scene, stepped at 10 frames a second like in the pane,
 // and fed a made-up session so it eats, burns, powers up and falls asleep.
-import { choke, createScene, fedUp, finishTurn, hatch, hit, levelUp, paint, perk, pet as stroke, serve, startTurn, step, toolColor, typed, wait as calls, AMBER, BURP, BURST, EGG, LEVEL_UP, MINUTE, PALETTE, PROMPT, RED, SAD, STARVING, TEXT, THINKING, WARDROBE } from './paint.js'
+import { choke, cold as isCold, createScene, fedUp, finishTurn, hatch, hit, levelUp, paint, perk, pet as stroke, serve, startTurn, step, toolColor, typed, wait as calls, AMBER, BURP, BURST, EGG, LEVEL_UP, MINUTE, PALETTE, PROMPT, RED, SAD, STARVING, TEXT, THINKING, WARDROBE } from './paint.js'
 
 const FPS = 10
 const COLORS = Object.keys(PALETTE)
@@ -200,8 +200,7 @@ class Pet {
       return `<span class="dim">${name.padEnd(8)}</span><span class="${tone(pct)}">${'█'.repeat(filled)}</span><span class="dim">${'░'.repeat(width - filled)}</span>${`${Math.round(pct)}%`.padStart(5)} ${tail}`
     }
     const chain = s.combo >= 2 ? `  on fire x${s.combo}` : ''
-    const cold = !s.busy && s.cache !== null && s.at - s.cache.at > s.cache.ttl
-    const second = this.doing !== '' ? `> ${this.doing}${chain}` : cold ? `cold cache: next prompt re-reads ~${kilo(s.cache.tokens)} uncached` : b.ate > 0 ? `last bite +${kilo(b.ate)}, fed ${span(s.at - b.fedAt)} ago` : `fed ${span(s.at - b.fedAt)} ago`
+    const second = this.doing !== '' ? `> ${this.doing}${chain}` : isCold(s) ? `cold cache: next prompt re-reads ~${kilo(s.cache.tokens)} uncached` : b.ate > 0 ? `last bite +${kilo(b.ate)}, fed ${span(s.at - b.fedAt)} ago` : `fed ${span(s.at - b.fedAt)} ago`
     // The belly bar split by category, the reserve at the far end; a legend under it.
     const parts = slicesOf(b)
     let room = width

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ModelUsage, Register, SessionContextUsage, Timer } from 'claude-code'
 
-import type { Belly, Cache, Limit, Look, Slice } from '../types'
+import type { Belly, Limit, Look, Slice } from '../types'
 import { OLD_DIET, label, registerDiet } from './diet'
 import { PANE, PANE_OPEN, isDietWord, isSoundWord, kilo, tokens } from './format'
 import { levelOf, xpFor } from './grow'
@@ -20,8 +20,11 @@ import {
   TEXT,
   THINKING,
   WARDROBE,
+  choke,
+  cold,
   createScene,
   encode,
+  fedUp,
   finishTurn,
   hatch,
   hit,
@@ -37,8 +40,6 @@ import {
   toolColor,
   typed,
   wait,
-  choke,
-  fedUp,
 } from './paint'
 import type { Fuss, Scene } from './paint'
 import { registerSound } from './sound'
@@ -413,24 +414,33 @@ const rally = async ($: EngineInterface, isListed = false) => {
   }
 }
 
-// The prompt cache lapses 5 minutes after a response, or an hour on some sessions;
+// The prompt cache lapses 5 minutes after a request, or an hour on some sessions;
 // the API does not say which. 5 minutes, until a response after a longer gap still
 // reads most of its prompt from the cache: then an hour, for the session.
 const CACHE_SHORT = 5 * MINUTE
 const CACHE_LONG = 60 * MINUTE
 
-// A main loop response came, for a request sent at `sent`.
-const warm = async ($: EngineInterface, sent: number, usage: ModelUsage) => {
-  const at = await clocked($)
-  const prompt = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
-  const isLong = (last: Cache | null) =>
-    last !== null && (last.ttl === CACHE_LONG || (sent - last.at > CACHE_SHORT && usage.cache_read_input_tokens > prompt / 2))
+// Wakes the clock the moment the cache lapses, so the bowl shows on time.
+let chill: Timer | undefined
 
-  scene.cache = await update($, cache, last => ({
-    at,
-    tokens: prompt + usage.output_tokens,
-    ttl: isLong(last) ? CACHE_LONG : CACHE_SHORT,
-  }))
+// A main loop response came, for a request sent at `sent`: the cache holds its prompt from then.
+const warm = async ($: EngineInterface, sent: number, usage: ModelUsage) => {
+  const prompt = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+  const last = await read($, cache)
+  const isLong =
+    last !== null && (last.ttl === CACHE_LONG || (sent - last.at > CACHE_SHORT && usage.cache_read_input_tokens > prompt / 2))
+  const kept = { at: sent, tokens: prompt + usage.output_tokens, ttl: isLong ? CACHE_LONG : CACHE_SHORT }
+
+  scene.cache = await update($, cache, () => kept)
+  chill?.cancel()
+  chill = $.clock.after(Math.max(0, sent + kept.ttl - (await clocked($))) + 1, () => void clocked($))
+}
+
+// A new conversation (/clear) or a compacted one: nothing of it is cached yet to go cold.
+const forget = async ($: EngineInterface) => {
+  chill?.cancel()
+  scene.cache = await update($, cache, () => null)
+  await clocked($)
 }
 
 // A single tool result this big, in tokens, makes it gag: rare in normal use.
@@ -444,46 +454,80 @@ const gag = async ($: EngineInterface, call: string, size: number) => {
   await reply($, 'x', `*gag* ${call.slice(0, 42 - tail.length)}${tail}`)
 }
 
-// The last call that failed, by tool and label: the same one failing again in a row
-// makes it fed up. It only shows; the model is never told.
-let failed = ''
+// Every tool call in flight, by its id: its tool, label and arguments, its loop ('' for
+// the main one, else the subagent's id), whether the person was asked, whether it showed
+// a sign of running, and whether a rule refused it.
+type Call = { tool: string; label: string; input: Record<string, unknown>; loop: string; asked: boolean; ran: boolean; refused: boolean }
 
-const tally = async ($: EngineInterface, call: string, isError: boolean) => {
+const calls = new Map<string, Call>()
+
+// Whether a dialog's arguments are this call's.
+const same = (args: unknown, call: Call) =>
+  Object.entries((args ?? {}) as Record<string, unknown>).every(([key, value]) => JSON.stringify(value) === JSON.stringify(call.input[key]))
+
+// The last call that failed in each loop, by tool and label: the same one failing again,
+// with no success between, makes it fed up. It only shows; the model is never told.
+const failed = new Map<string, string>()
+
+const tally = async ($: EngineInterface, call: Call, isError: boolean) => {
+  // A refusal, at the dialog or by a rule, is someone's say, not a failure. A call
+  // asked about that never showed a sign of running counts as refused.
+  if (isError && (call.refused || (call.asked && !call.ran))) return
   if (!isError) {
-    if (call === failed) failed = ''
+    failed.delete(call.loop)
     return
   }
 
-  if (call === failed) {
+  if (failed.get(call.loop) === call.label) {
     fedUp(scene)
-    await reply($, '-', `ugh. ${call.slice(0, 30)} failed again`)
+    await reply($, '-', `ugh. ${call.label.slice(0, 30)} failed again`)
   }
-  failed = call
+  failed.set(call.loop, call.label)
 }
 
-// The calls waiting on the person, by tool and label: a permission dialog or a
-// question each, the main loop's or a subagent's.
+// What a finished call fed it: a meal, maybe a gag, and a tally of failures.
+const eat = async ($: EngineInterface, call: Call, ran: { text?: string; isError?: boolean }) => {
+  const size = tokens(ran.text)
+
+  serve(scene, size, toolColor(call.tool))
+  if (size >= HUGE) await gag($, call.label, size)
+  await tally($, call, ran.isError === true)
+}
+
+// The calls waiting on the person, oldest first, by id: a permission dialog or a
+// question each, the main loop's or a subagent's. The readout names the last.
 let asks: string[] = []
 
-const ask = async ($: EngineInterface, call: string) => {
-  asks.push(call)
-  wait(scene, true)
-  await update($, waiting, () => call)
+const show = async ($: EngineInterface) => {
+  const last = asks.at(-1)
+
+  wait(scene, last !== undefined)
+  await update($, waiting, () => (last === undefined ? null : (calls.get(last)?.label ?? null)))
 }
 
-// The person answered `call` (it ran or was denied), or everything ended at once.
-const answered = async ($: EngineInterface, call?: string) => {
-  if (call === undefined) asks = []
-  else if (asks.includes(call)) asks.splice(asks.indexOf(call), 1)
-  else return
+const ask = async ($: EngineInterface, id: string) => {
+  asks = [...asks.filter(one => one !== id), id]
+  await show($)
+}
 
-  if (asks.length === 0) {
-    wait(scene, false)
-    await update($, waiting, () => null)
-  }
+// These calls are no longer waiting: answered, running, or ended.
+const answered = async ($: EngineInterface, ids: readonly string[]) => {
+  if (!asks.some(id => ids.includes(id))) return
+
+  asks = asks.filter(id => !ids.includes(id))
+  await show($)
+}
+
+// The first sign a call asked about runs: the person said yes.
+const runs = async ($: EngineInterface, id: string) => {
+  const call = calls.get(id)
+
+  if (call !== undefined) call.ran = true
+  await answered($, [id])
 }
 
 const CALLING = { eye: 'O', say: 'psst! me waiting for you' }
+const waitLine = (call: string) => `> waiting for you: ${call}`
 
 // Its answer to a pet, by how it took it; each pet says the next line.
 const FUSSES: Record<Fuss, { eye: string; lines: string[] }> = {
@@ -700,7 +744,10 @@ export const register: Register = on => {
     // A hook that fails after next() has its answer dropped and core summarizes instead,
     // which would turn a diet into a full compaction: the burp may fail, the meal may not.
     try {
-      if (done.skip === undefined && e.agentId === undefined && e.trigger !== 'precompute') await burp($, done.tokensAfter)
+      if (done.skip === undefined && e.agentId === undefined && e.trigger !== 'precompute') {
+        await burp($, done.tokensAfter)
+        await forget($)
+      }
     } catch {}
 
     return done
@@ -718,10 +765,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('prompt.submit', async ($, e, next) => {
+  on('prompt.submit', ($, e, next) => {
     serve(scene, tokens(e.text), PROMPT)
     perk(scene)
-    await answered($)
 
     return next(e)
   })
@@ -765,67 +811,118 @@ export const register: Register = on => {
       finishTurn(scene, e.isAborted)
       await update($, combo, () => 0)
       await act($, '')
-      await answered($)
       await bank($)
     }
 
+    // A loop's turn ended: none of its calls waits any more.
+    await answered($, asks.filter(id => calls.get(id)?.loop === (e.agentId ?? '')))
     await rally($, true)
 
     return next(e)
   })
 
   // A dialog up for the person: the ask path raises this hook once the mode's own
-  // decider (the auto mode classifier) has not settled it. A settings hook that
-  // answered it asks no one.
+  // decider (the auto mode classifier) has not settled it. It carries no call id, so
+  // it goes to the call in flight in its loop with the same tool and arguments. A
+  // settings hook that answered it asks no one.
   on('classic.PermissionRequest', async ($, e, next) => {
     const done = await next(e)
+    const found = [...calls].find(
+      ([, call]) => !call.asked && call.tool === e.tool_name && call.loop === (e.agent_id ?? '') && same(e.tool_input, call),
+    )
 
-    if (done.decision === undefined) await ask($, `${e.tool_name} ${label(e.tool_input as Record<string, unknown>)}`.trim())
+    if (done.decision === undefined && found !== undefined) {
+      found[1].asked = true
+      await ask($, found[0])
+    }
 
     return done
   })
 
-  // Every tool result is a meal; the main loop's calls chain into combos and power up.
-  on('tool.call', async ($, e, next) => {
-    const call = `${e.tool} ${label(e as unknown as Record<string, unknown>)}`.trim()
+  // The auto mode classifier refused a call.
+  on('classic.PermissionDenied', async ($, e, next) => {
+    const call = calls.get(e.tool_use_id)
 
-    if (e.agentId !== undefined) {
-      const ran = await next(e)
+    if (call !== undefined) call.refused = true
 
-      await answered($, call)
-      serve(scene, tokens(ran.text), toolColor(e.tool))
-      if (tokens(ran.text) >= HUGE) await gag($, call, tokens(ran.text))
-      await tally($, call, ran.isError === true)
+    return next(e)
+  })
 
-      return ran
+  // No event says a dialog was answered. Its call running says yes: a subagent being
+  // spawned, or the run-in-background hint a long command shows. A no ends the call.
+  on('agent.spawn', async ($, e, next) => {
+    await runs($, e.tool_use_id)
+
+    return next(e)
+  })
+
+  // Drawing may not write state: the wait ends on the next tick of the clock.
+  on('ui.render', { component: 'ToolProgress' }, ($, e, next) => {
+    $.clock.after(0, () => void runs($, e.props.tool_use_id))
+
+    return next(e)
+  })
+
+  // A new conversation: its failures, and its cache, start over.
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'clear') {
+      failed.clear()
+      await forget($)
     }
 
-    const isAgent = e.tool === 'Agent'
+    return next(e)
+  })
+
+  // Every tool result is a meal; the main loop's calls chain into combos and power up.
+  on('tool.call', async ($, e, next) => {
+    const id = e.tool_use_id
+    const isMain = e.agentId === undefined
+    const isAgent = isMain && e.tool === 'Agent'
+    const call: Call = {
+      tool: e.tool,
+      label: `${e.tool} ${label(e as unknown as Record<string, unknown>)}`.trim(),
+      input: e as unknown as Record<string, unknown>,
+      loop: e.agentId ?? '',
+      asked: false,
+      ran: false,
+      refused: false,
+    }
+
+    calls.set(id, call)
 
     // Everything counted up is inside the try, so the finally always counts it down.
     try {
-      scene.tools.set(e.tool_use_id, e.tool)
-      if (isAgent) inflight += 1
-      await rally($)
-      await act($, call)
+      // A question's whole run is the wait for the person's answer.
+      if (e.tool === 'AskUserQuestion') await ask($, id)
+      if (isMain) {
+        scene.tools.set(id, e.tool)
+        if (isAgent) inflight += 1
+        await rally($)
+        await act($, call.label)
+      }
 
       const ran = await next(e)
 
-      await answered($, call)
-      hit(scene, ran.isError === true, await $.clock.now())
-      serve(scene, tokens(ran.text), toolColor(e.tool))
-      if (tokens(ran.text) >= HUGE) await gag($, call, tokens(ran.text))
-      await tally($, call, ran.isError === true)
-      await update($, combo, () => scene.combo)
-      lapse?.cancel()
-      lapse = $.clock.after(COMBO_MS, () => void update($, combo, () => 0))
+      await answered($, [id])
+      if ('deny' in ran) call.refused = true
+      if (isMain) hit(scene, ran.isError === true, await $.clock.now())
+      await eat($, call, ran)
+      if (isMain) {
+        await update($, combo, () => scene.combo)
+        lapse?.cancel()
+        lapse = $.clock.after(COMBO_MS, () => void update($, combo, () => 0))
+      }
 
       return ran
     } finally {
-      scene.tools.delete(e.tool_use_id)
-      if (isAgent) inflight -= 1
-      await rally($, isAgent)
-      await act($, [...scene.tools.values()].at(-1) ?? (scene.busy ? 'thinking...' : ''))
+      await answered($, [id])
+      calls.delete(id)
+      if (isMain) {
+        scene.tools.delete(id)
+        if (isAgent) inflight -= 1
+        await rally($, isAgent)
+        await act($, [...scene.tools.values()].at(-1) ?? (scene.busy ? 'thinking...' : ''))
+      }
     }
   })
 
@@ -866,7 +963,7 @@ export const register: Register = on => {
       ...limits.map(limit => `  ${limitName(limit.kind)} ${Math.round(limit.percentUsed)}%`),
       '  /token-monster',
     ]
-    const head = `(${eye})(${eye}) ${asked !== null ? `waiting for you: ${asked}` : activity !== '' ? `> ${activity}${onFire(hits)}` : say}`
+    const head = `(${eye})(${eye}) ${asked !== null ? waitLine(asked) : activity !== '' ? `> ${activity}${onFire(hits)}` : say}`
     const meter = ` ${used}${left} ${full.percent}%`
     const room = e.props.bodyColumns - 2
     // What fits: the face and words first, cut short if they must, then the gauges.
@@ -903,8 +1000,7 @@ export const register: Register = on => {
     const rank = levelOf(eaten)
     const isLoud = await read($, sound)
     const asked = await read($, waiting)
-    const kept = await read($, cache)
-    const isCold = !scene.busy && kept !== null && at - kept.at > kept.ttl
+    const kept = cold(scene) ? scene.cache : null
     // Waiting on the person outranks everything: that is what needs them now.
     // About to burst outranks super mode: that line is the /compact warning.
     // What it said back to a pet or a hello shows for a moment, over its mood; hatching, it cracks.
@@ -1016,10 +1112,10 @@ export const register: Register = on => {
           </Text>
           <Text dimColor wrap="truncate-end">
             {asked !== null
-              ? `> waiting for you: ${asked}`
+              ? waitLine(asked)
               : activity !== ''
                 ? `> ${activity}${chain}`
-                : isCold
+                : kept !== null
                   ? `cold cache: next prompt re-reads ~${kilo(kept.tokens)} uncached`
                   : full.ate > 0
                     ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`

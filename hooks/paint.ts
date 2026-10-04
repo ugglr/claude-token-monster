@@ -330,8 +330,8 @@ export const finishTurn = (s: Scene, isAborted = false) => {
 }
 
 // Asleep: three quiet minutes with nothing flowing, and well fed. A hungry monster
-// stays up, so the sprite, a pet and the snore all agree on this one rule.
-export const asleep = (s: Scene) =>
+// stays up, so the sprite and a pet agree on this one rule.
+const asleep = (s: Scene) =>
   !s.busy && s.heat <= 0.02 && s.tick - s.activeAt > DOZE && (s.belly === null || s.at - s.belly.fedAt < SAD)
 
 // It grew a level: the big moment. A first reading of the level is no moment.
@@ -370,6 +370,9 @@ export const fedUp = (s: Scene) => {
   s.activeAt = s.tick
 }
 
+// The prompt cache has lapsed since the last request, and no turn runs: the next prompt re-reads it all.
+export const cold = (s: Scene) => !s.busy && s.cache !== null && s.at - s.cache.at > s.cache.ttl
+
 // Claude started or stopped waiting on the person.
 export const wait = (s: Scene, isWaiting: boolean) => {
   if (isWaiting && !s.waiting) s.waitAt = s.tick
@@ -395,7 +398,8 @@ const comboShown = (s: Scene) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRA
 // Whether anything moves beyond breathing and blinking, so a frame is worth painting.
 export const lively = (s: Scene) =>
   s.busy ||
-  s.waiting ||
+  // A few seconds into a wait the call calms to the idle rate.
+  (s.waiting && s.tick - s.waitAt < 30) ||
   s.heat > 0.02 ||
   s.power > 0.02 ||
   s.frenzy > 0.02 ||
@@ -525,8 +529,7 @@ const shape = (s: Scene, width: number, height: number) => {
     back: move.back || spin < 0.3,
     petting: t - s.petAt < PET,
     calling: s.waiting,
-    // The prompt cache has lapsed since the last response: the next one re-reads it all.
-    cold: !s.busy && s.cache !== null && s.at - s.cache.at > s.cache.ttl,
+    cold: cold(s),
     greeting: t - s.greetAt < GREET,
     leveling,
     grown,

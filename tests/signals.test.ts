@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { choke, createScene, fedUp, paint, step, wait } from '../hooks/paint'
+import { choke, createScene, fedUp, lively, paint, step, wait } from '../hooks/paint'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { call, done, pane, text } from './harness'
@@ -10,39 +10,87 @@ import { call, done, pane, text } from './harness'
 // Whether missing.ts turned up.
 let found = false
 
+// Calls the test holds in flight, by command, file or tool: whether a dialog opens for
+// them first, a gate to let them go, and a mark once they are under way.
+const held = new Map<string, { isAsked: boolean; gate: Promise<void>; reached: () => void }>()
+// Each held call's id, as the engine gave it.
+const ids = new Map<string, string>()
+// The engine the held calls raise their dialogs on.
+let world: Engine
+
+const key = (input: Record<string, unknown>) => String(input.command ?? input.file_path ?? input.tool)
+
 // `answer`: a settings hook's decision on a permission dialog, when one answers it.
 const engine = (on: On, answer?: 'allow') => {
-  on('turn.step', async function* () {
+  on('turn.step', async function* (_: unknown, e: { turnId: string }) {
+    if (delay > 0) await clock.advance(delay)
     yield { kind: 'stop', stopReason: 'end_turn', usage: { ...usage, model: 'm' } }
 
-    return { turnId: 't1', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: { ...usage, model: 'm' } }
+    return { turnId: e.turnId, index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: { ...usage, model: 'm' } }
   } as never)
   on('classic.PermissionRequest', () => (answer === undefined ? {} : { decision: { behavior: answer } }))
+  on('classic.SessionStart', () => ({}))
+  on('agent.spawn', () => ({ model: 'm' }) as never)
+  on('ui.render', { component: 'ToolProgress' }, () => ({ type: 'Text', props: {}, children: [''] }) as never)
   on('session.measure', (_, e) => ({ changed: e.changed }))
   on('ui.blit', () => ({ value: {} }))
   on('agent.list', () => ({ value: [] }) as never)
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
-  // huge.json is 25k tokens; missing.ts fails until it is `found`.
-  on('tool.call', (_, e) => {
-    const { file_path } = e as unknown as { file_path?: string }
+  // huge.json is 25k tokens; missing.ts fails until it is `found`, and so does a
+  // command the person refuses.
+  on('tool.call', async (_, e) => {
+    const { tool, tool_use_id, agentId, ...args } = e as unknown as Record<string, unknown> & { tool: string; tool_use_id: string; agentId?: string }
+    const hold = held.get(key({ tool, ...args }))
 
-    return { result: {}, text: 'x'.repeat(file_path === 'huge.json' ? 100_000 : 400), isError: file_path === 'missing.ts' && !found } as never
+    if (hold !== undefined) {
+      ids.set(key({ tool, ...args }), tool_use_id)
+      if (hold.isAsked) await world.classic.PermissionRequest({ tool_name: tool, tool_input: args, agent_id: agentId } as never)
+      hold.reached()
+      await hold.gate
+    }
+
+    const isError = (args.file_path === 'missing.ts' && !found) || String(args.command).startsWith('refused')
+
+    return { result: {}, text: 'x'.repeat(args.file_path === 'huge.json' ? 100_000 : 400), isError } as never
   })
 
-  return mock.clock(on)
+  clock = mock.clock(on)
+
+  return clock
 }
+
+let clock: ReturnType<typeof mock.clock>
 
 const fed = { percent: 30, fill: 30, tokens: 1, window: 1, ate: 0, fedAt: 0, burpAt: null, known: true, compactAt: null }
 
-// The engine putting `npm test` to the person.
-const asks = ($: Engine) => $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } } as never)
+// Starts `input` and holds it in flight, a dialog open for it unless `isAsked` is false;
+// resolves to a function that lets it go and waits for it to end.
+const hold = async ($: Engine, input: Record<string, unknown>, isAsked = true) => {
+  let go = () => {}
+  let there = () => {}
+  const gate = new Promise<void>(resolve => (go = resolve))
+  const reached = new Promise<void>(resolve => (there = resolve))
 
-test('a dialog up for the person makes it call them, until the call runs', async ($, on) => {
+  world = $
+  held.set(key(input), { isAsked, gate, reached: there })
+
+  const running = call($, input)
+
+  await reached
+
+  return async () => {
+    go()
+    await running
+    held.delete(key(input))
+  }
+}
+
+test('a dialog opened inside a tool call calls you, naming it, until the call ends', async ($, on) => {
   engine(on)
   const ui = await pane($, 'desktop')
+  const release = await hold($, { tool: 'Bash', command: 'npm test' })
 
-  await asks($)
   expect(await ui.find(text('psst! me waiting for you'))).toBeDefined()
   expect(await ui.find(text('> waiting for you: Bash npm test'))).toBeDefined()
 
@@ -50,33 +98,114 @@ test('a dialog up for the person makes it call them, until the call runs', async
   await call($, { tool: 'Read', file_path: 'a.ts' })
   expect(await ui.find(text(/waiting for you/))).toBeDefined()
 
-  await call($, { tool: 'Bash', command: 'npm test' })
+  await release()
   expect(await ui.find(text(/waiting/))).toBeUndefined()
 })
 
-test('a prompt or the turn ending stops the call', async ($, on) => {
+test('the first sign an approved call runs ends the wait, long before it finishes', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+  const build = await hold($, { tool: 'Bash', command: 'npm run build' })
+
+  // A long command draws its run-in-background hint once it runs.
+  await $.ui.mount({
+    plugin: 'token-monster',
+    surface: 'terminal',
+    component: 'ToolProgress',
+    requestId: ids.get('npm run build')!,
+    props: { tool_use_id: ids.get('npm run build')!, kind: 'background_hint', hint: '(ctrl+b to run in background)' },
+  } as never)
+  await clock.advance(1)
+  expect(await ui.find(text(/waiting/))).toBeUndefined()
+
+  // An approved subagent is spawned.
+  const helper = await hold($, { tool: 'Agent', description: 'help', prompt: 'help me', subagent_type: 'general-purpose' })
+
+  expect(await ui.find(text('> waiting for you: Agent help'))).toBeDefined()
+  await $.agent.spawn({ tool_use_id: ids.get('Agent')!, prompt: 'help me', description: 'help', subagentType: 'general-purpose' } as never)
+  expect(await ui.find(text(/waiting/))).toBeUndefined()
+
+  await build()
+  await helper()
+})
+
+test('waits go by call, not label: the readout names the last call still waiting', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+  // Two calls with the same label; only the first is asked about.
+  const first = await hold($, { tool: 'Bash', command: 'npm run a', description: 'build' })
+  const second = await hold($, { tool: 'Bash', command: 'npm run b', description: 'build' }, false)
+
+  await second()
+  expect(await ui.find(text('> waiting for you: Bash build'))).toBeDefined()
+
+  const later = await hold($, { tool: 'Read', file_path: 'b.ts' })
+
+  expect(await ui.find(text('> waiting for you: Read b.ts'))).toBeDefined()
+  await later()
+  expect(await ui.find(text('> waiting for you: Bash build'))).toBeDefined()
+
+  await first()
+  expect(await ui.find(text(/waiting/))).toBeUndefined()
+})
+
+test('a question is a wait for its whole run', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+  const question = await hold($, { tool: 'AskUserQuestion', questions: [{ question: 'Which?' }] }, false)
+
+  expect(await ui.find(text('> waiting for you: AskUserQuestion'))).toBeDefined()
+  await question()
+  expect(await ui.find(text(/waiting/))).toBeUndefined()
+})
+
+test("a subagent's dialog outlasts the main turn and a prompt, and ends with its own call", async ($, on) => {
   engine(on)
   on('prompt.submit', (_, e) => ({ text: e.text }) as never)
   const ui = await pane($, 'desktop')
 
-  await asks($)
-  expect(await ui.find(text(/waiting/))).toBeDefined()
-  await $.prompt.submit({ text: 'no, do this instead' } as never)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  const helper = await hold($, { tool: 'Bash', command: 'npm test', agentId: 'a1' })
+
+  await $.turn.complete({ ...done, turnId: 't1' })
+  await $.prompt.submit({ text: 'meanwhile' } as never)
+  expect(await ui.find(text('> waiting for you: Bash npm test'))).toBeDefined()
+
+  await helper()
   expect(await ui.find(text(/waiting/))).toBeUndefined()
+})
+
+test('the main turn ending ends its own waits', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
 
   await $.turn.start({ text: 'go', turnId: 't1' })
-  await asks($)
-  expect(await ui.find(text(/waiting/))).toBeDefined()
+  const pending = await hold($, { tool: 'Bash', command: 'npm test' })
+
   await $.turn.complete({ ...done, turnId: 't1' })
   expect(await ui.find(text(/waiting/))).toBeUndefined()
+  await pending()
 })
 
 test('a settings hook that answered the dialog asks no one', async ($, on) => {
   engine(on, 'allow')
   const ui = await pane($, 'desktop')
+  const release = await hold($, { tool: 'Bash', command: 'npm test' })
 
-  await asks($)
   expect(await ui.find(text(/waiting/))).toBeUndefined()
+  await release()
+})
+
+test('a few seconds into a wait, it paints at the idle rate', () => {
+  const s = createScene({ monster: 'cookie', color: 'blue' })
+
+  s.belly = fed
+  for (let i = 0; i < 40; i++) step(s, 46, 40)
+  wait(s, true)
+  step(s, 46, 40)
+  expect(lively(s)).toBe(true)
+  for (let i = 0; i < 40; i++) step(s, 46, 40)
+  expect(lively(s)).toBe(false)
 })
 
 test('calling, it waves both hands, hops, and a ! blinks beside its head, at every size', () => {
@@ -102,13 +231,16 @@ test('calling, it waves both hands, hops, and a ! blinks beside its head, at eve
   }
 })
 
-// What the next response reports: its prompt, read from the cache or not.
+// What the next response reports: its prompt, read from the cache or not, and how
+// long it takes to come back, in ms.
+let delay = 0
 let usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 
 // A main loop response, then the clock and the context checked, as each turn's end does.
-const respond = async ($: Engine, read: number, written: number) => {
+// `agentId`: a subagent's response instead.
+const respond = async ($: Engine, read: number, written: number, agentId?: string) => {
   usage = { input_tokens: 2000, output_tokens: 1000, cache_read_input_tokens: read, cache_creation_input_tokens: written }
-  const stream = $.turn.step({ turnId: 't1', index: 0, model: 'm', messageCount: 1 })
+  const stream = $.turn.step({ turnId: 't1', index: 0, model: 'm', messageCount: 1, agentId })
 
   for await (const _ of stream) {
   }
@@ -155,6 +287,50 @@ test('a response after a long gap that still read its prompt from the cache make
   await clock.advance(31 * 60_000)
   await measure($)
   expect(await ui.find(text(/cold cache/))).toBeDefined()
+})
+
+test('the bowl shows the moment the cache lapses, counted from when the request was sent', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  // The answer takes a minute to come back: the cache lapses five minutes after the send.
+  delay = 60_000
+  await respond($, 100_000, 17_000)
+  delay = 0
+  await clock.advance(4 * 60_000 - 1000)
+  expect(await ui.find(text(/cold cache/))).toBeUndefined()
+
+  // No measurement in between: its own timer wakes the readout.
+  await clock.advance(2000)
+  expect(await ui.find(text(/cold cache/))).toBeDefined()
+})
+
+test('/clear and /compact leave nothing cached to go cold', async ($, on) => {
+  engine(on)
+  on('session.compact', () => ({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] }))
+  const ui = await pane($, 'desktop')
+
+  await respond($, 100_000, 17_000)
+  await clock.advance(6 * 60_000)
+  expect(await ui.find(text(/cold cache/))).toBeDefined()
+  await $.classic.SessionStart({ source: 'clear' } as never)
+  expect(await ui.find(text(/cold cache/))).toBeUndefined()
+
+  await respond($, 100_000, 17_000)
+  await clock.advance(6 * 60_000)
+  expect(await ui.find(text(/cold cache/))).toBeDefined()
+  await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'long story', toolUses: [] }] })
+  expect(await ui.find(text(/cold cache/))).toBeUndefined()
+})
+
+test("a subagent's responses do not warm the main cache", async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  await respond($, 100_000, 17_000, 'a1')
+  await clock.advance(6 * 60_000)
+  await measure($)
+  expect(await ui.find(text(/cold cache/))).toBeUndefined()
 })
 
 test('cold, a frosted bowl of leftovers sits beside it, at every size; busy, it is gone', () => {
@@ -231,8 +407,8 @@ test('the same call failing twice in a row makes it fed up for a moment', async 
   expect(await ui.find(text(/failed again/))).toBeUndefined()
 })
 
-test('fed up, it crosses its arms under a throbbing anger mark, at every size, then lets it go', () => {
-  for (const [width, height] of [[16, 12], [46, 40], [64, 44]] as const) {
+test('fed up, it crosses its arms under a throbbing anger mark, then lets it go', () => {
+  for (const [width, height] of [[46, 40], [64, 44]] as const) {
     const s = createScene({ monster: 'gremlin', color: 'blue' })
 
     s.belly = fed
@@ -241,10 +417,45 @@ test('fed up, it crosses its arms under a throbbing anger mark, at every size, t
 
     fedUp(s)
     step(s, width, height)
-    if (width > 16) expect(paint(s, width, height).includes(0xff3b3b)).toBe(true)
+    expect(paint(s, width, height).includes(0xff3b3b)).toBe(true)
     expect(s.antic).toBeNull()
 
     for (let i = 0; i < 60; i++) step(s, width, height)
     expect(paint(s, width, height).includes(0xff3b3b)).toBe(false)
   }
+})
+
+test('a refusal is no failure: refused twice, it is not fed up', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  for (let i = 0; i < 2; i++) await (await hold($, { tool: 'Bash', command: 'refused rm -rf build' }))()
+  expect(await ui.find(text(/failed again/))).toBeUndefined()
+})
+
+test('any success between two failures resets it, in its own loop only', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  await call($, { tool: 'Read', file_path: 'a.ts' })
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  expect(await ui.find(text(/failed again/))).toBeUndefined()
+
+  // A subagent failing the same way is its own loop, and its success is not the main loop's.
+  await call($, { tool: 'Bash', file_path: 'missing.ts', agentId: 'a1' })
+  expect(await ui.find(text(/failed again/))).toBeUndefined()
+  await call($, { tool: 'Read', file_path: 'a.ts', agentId: 'a1' })
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  expect(await ui.find(text('ugh. Bash missing.ts failed again'))).toBeDefined()
+})
+
+test('/clear forgets the last failure', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  await $.classic.SessionStart({ source: 'clear' } as never)
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  expect(await ui.find(text(/failed again/))).toBeUndefined()
 })

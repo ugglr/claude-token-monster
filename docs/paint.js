@@ -215,6 +215,7 @@ const fedUp = (s) => {
   s.fedUpAt = s.tick;
   s.activeAt = s.tick;
 };
+const cold = (s) => !s.busy && s.cache !== null && s.at - s.cache.at > s.cache.ttl;
 const wait = (s, isWaiting) => {
   if (isWaiting && !s.waiting) s.waitAt = s.tick;
   s.waiting = isWaiting;
@@ -231,7 +232,8 @@ const settle = (s) => {
   s.antic = null;
 };
 const comboShown = (s) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES;
-const lively = (s) => s.busy || s.waiting || s.heat > 0.02 || s.power > 0.02 || s.frenzy > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.gagAt < GAG || s.tick - s.fedUpAt < FED_UP || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
+const lively = (s) => s.busy || // A few seconds into a wait the call calms to the idle rate.
+s.waiting && s.tick - s.waitAt < 30 || s.heat > 0.02 || s.power > 0.02 || s.frenzy > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.gagAt < GAG || s.tick - s.fedUpAt < FED_UP || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
 const shape = (s, width, height) => {
   const t = s.tick;
   const full = (s.belly?.percent ?? 0) / 100;
@@ -318,8 +320,7 @@ const shape = (s, width, height) => {
     back: move.back || spin < 0.3,
     petting: t - s.petAt < PET,
     calling: s.waiting,
-    // The prompt cache has lapsed since the last response: the next one re-reads it all.
-    cold: !s.busy && s.cache !== null && s.at - s.cache.at > s.cache.ttl,
+    cold: cold(s),
     greeting: t - s.greetAt < GREET,
     leveling,
     grown,
@@ -2051,8 +2052,8 @@ export {
   TEXT,
   THINKING,
   WARDROBE,
-  asleep,
   choke,
+  cold,
   createScene,
   encode,
   fedUp,
