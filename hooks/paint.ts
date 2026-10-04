@@ -179,6 +179,55 @@ const mix = (a: number, b: number, t: number) => {
   return channel(16) | channel(8) | channel(0)
 }
 
+// A color as hue (degrees), saturation and lightness (0 to 1), and back.
+const toHsl = (color: number) => {
+  const [r, g, b] = [((color >> 16) & 255) / 255, ((color >> 8) & 255) / 255, (color & 255) / 255]
+  const [hi, lo] = [Math.max(r, g, b), Math.min(r, g, b)]
+  const l = (hi + lo) / 2
+  const d = hi - lo
+
+  if (d === 0) return [0, 0, l] as const
+
+  const h = hi === r ? (g - b) / d + (g < b ? 6 : 0) : hi === g ? (b - r) / d + 2 : (r - g) / d + 4
+
+  return [h * 60, l > 0.5 ? d / (2 - hi - lo) : d / (hi + lo), l] as const
+}
+
+const fromHsl = (h: number, s: number, l: number) => {
+  const a = s * Math.min(l, 1 - l)
+  const channel = (n: number) => {
+    const k = (n + h / 30) % 12
+
+    return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))))
+  }
+
+  return (channel(0) << 16) | (channel(8) << 8) | channel(4)
+}
+
+// Turns hue `h` by up to `by` degrees toward `to`, the short way round.
+const toward = (h: number, to: number, by: number) => {
+  const d = ((to - h + 540) % 360) - 180
+
+  return (h + Math.sign(d) * Math.min(Math.abs(d), by) + 360) % 360
+}
+
+// `color` shaded `step` bands lighter, or darker below 0, as handheld-era sprites do:
+// shadows turn toward blue and light toward yellow, rather than mixing in black and
+// white, which greys colors out. Warm colors take their light as yellow more than as
+// white, so a red's highlight stays a hot red-orange instead of going pink.
+const ramp = (color: number, step: number) => {
+  const [h, s, l] = toHsl(color)
+
+  if (s < 0.08) return fromHsl(h, s, clamp(l + step * 0.16, 0.04, 0.97))
+  if (step < 0) return fromHsl(toward(h, 250, -step * 14), clamp(s - step * 0.06), clamp(l + step * 0.13, 0.04, 0.96))
+
+  const warm = h < 70 || h > 320
+
+  return warm
+    ? fromHsl(toward(h, 55, step * 12), clamp(s + step * 0.08), clamp(l + step * 0.1, 0.04, 0.96))
+    : fromHsl(toward(h, 55, step * 10), clamp(s - step * 0.04), clamp(l + step * 0.13, 0.04, 0.96))
+}
+
 // A fully saturated color going round the hue wheel, for the frenzy.
 const rainbow = (turn: number) => {
   const h = ((turn % 1) + 1) % 1 * 6
@@ -1527,15 +1576,18 @@ class Canvas {
         const [nx, ny] = [(x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry]
         const nz = Math.sqrt(Math.max(0, 1 - Math.min(1, nx * nx + ny * ny)))
         const light = -0.45 * nx - 0.55 * ny + 0.7 * nz
-        let tone =
-          light > 0.82 ? mix(color, WHITE, 0.32) : light > 0.5 ? mix(color, WHITE, 0.12) : light > 0.12 ? color : mix(color, BLACK, 0.3)
+        let tone = light > 0.82 ? ramp(color, 1.1) : light > 0.5 ? ramp(color, 0.45) : light > 0.12 ? color : ramp(color, -1.3)
 
         if (belly && (nx / 0.55) ** 2 + ((ny - 0.38) / 0.5) ** 2 < 1) tone = mix(tone, WHITE, 0.25)
         if ((nx + 0.38) ** 2 + (ny + 0.48) ** 2 < 0.018) tone = mix(tone, WHITE, 0.7)
 
         const edge = !at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1)
+        // A selective outline: near black on the shadow side, a deep shade of the body
+        // where the light falls. A rim of another color is drawn as asked.
+        const lit = -0.45 * nx - 0.55 * ny > 0.15
+        const outline = rim !== INK ? mix(color, rim, 0.75) : lit ? ramp(color, -3.2) : mix(ramp(color, -3), INK, 0.5)
 
-        this.put(x, y, edge ? mix(color, rim, 0.75) : tone, alpha)
+        this.put(x, y, edge ? outline : tone, alpha)
       }
     }
   }

@@ -66,6 +66,34 @@ const mix = (a, b, t) => {
   };
   return channel(16) | channel(8) | channel(0);
 };
+const toHsl = (color) => {
+  const [r, g, b] = [(color >> 16 & 255) / 255, (color >> 8 & 255) / 255, (color & 255) / 255];
+  const [hi, lo] = [Math.max(r, g, b), Math.min(r, g, b)];
+  const l = (hi + lo) / 2;
+  const d = hi - lo;
+  if (d === 0) return [0, 0, l];
+  const h = hi === r ? (g - b) / d + (g < b ? 6 : 0) : hi === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, l > 0.5 ? d / (2 - hi - lo) : d / (hi + lo), l];
+};
+const fromHsl = (h, s, l) => {
+  const a = s * Math.min(l, 1 - l);
+  const channel = (n) => {
+    const k = (n + h / 30) % 12;
+    return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
+  };
+  return channel(0) << 16 | channel(8) << 8 | channel(4);
+};
+const toward = (h, to, by) => {
+  const d = (to - h + 540) % 360 - 180;
+  return (h + Math.sign(d) * Math.min(Math.abs(d), by) + 360) % 360;
+};
+const ramp = (color, step2) => {
+  const [h, s, l] = toHsl(color);
+  if (s < 0.08) return fromHsl(h, s, clamp(l + step2 * 0.16, 0.04, 0.97));
+  if (step2 < 0) return fromHsl(toward(h, 250, -step2 * 14), clamp(s - step2 * 0.06), clamp(l + step2 * 0.13, 0.04, 0.96));
+  const warm = h < 70 || h > 320;
+  return warm ? fromHsl(toward(h, 55, step2 * 12), clamp(s + step2 * 0.08), clamp(l + step2 * 0.1, 0.04, 0.96)) : fromHsl(toward(h, 55, step2 * 10), clamp(s - step2 * 0.04), clamp(l + step2 * 0.13, 0.04, 0.96));
+};
 const rainbow = (turn) => {
   const h = (turn % 1 + 1) % 1 * 6;
   const x = 1 - Math.abs(h % 2 - 1);
@@ -1026,11 +1054,13 @@ class Canvas {
         const [nx, ny] = [(x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry];
         const nz = Math.sqrt(Math.max(0, 1 - Math.min(1, nx * nx + ny * ny)));
         const light = -0.45 * nx - 0.55 * ny + 0.7 * nz;
-        let tone = light > 0.82 ? mix(color, WHITE, 0.32) : light > 0.5 ? mix(color, WHITE, 0.12) : light > 0.12 ? color : mix(color, BLACK, 0.3);
+        let tone = light > 0.82 ? ramp(color, 1.1) : light > 0.5 ? ramp(color, 0.45) : light > 0.12 ? color : ramp(color, -1.3);
         if (belly && (nx / 0.55) ** 2 + ((ny - 0.38) / 0.5) ** 2 < 1) tone = mix(tone, WHITE, 0.25);
         if ((nx + 0.38) ** 2 + (ny + 0.48) ** 2 < 0.018) tone = mix(tone, WHITE, 0.7);
         const edge = !at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1);
-        this.put(x, y, edge ? mix(color, rim, 0.75) : tone, alpha);
+        const lit = -0.45 * nx - 0.55 * ny > 0.15;
+        const outline = rim !== INK ? mix(color, rim, 0.75) : lit ? ramp(color, -3.2) : mix(ramp(color, -3), INK, 0.5);
+        this.put(x, y, edge ? outline : tone, alpha);
       }
     }
   }
@@ -1323,10 +1353,10 @@ const limbs = (c, f, s) => {
   }
 };
 const claw = (c, x, y, side, gape, thick, reach, color) => {
-  const toward = side > 0 ? -Math.PI / 3 : -2 * Math.PI / 3;
+  const toward2 = side > 0 ? -Math.PI / 3 : -2 * Math.PI / 3;
   c.blob(x, y, thick * 1.6, thick * 1.4, mix(color, WHITE, 0.08), (nx, ny) => nx * nx + ny * ny < 1);
   for (const [jaw, width] of [[-1, 0.62], [1, 0.45]]) {
-    const angle = toward + jaw * side * (0.3 + gape * 0.5);
+    const angle = toward2 + jaw * side * (0.3 + gape * 0.5);
     for (let k = 0; k <= 8; k++) {
       const p = k / 8;
       const bend = angle - jaw * side * p * p * 0.3;
