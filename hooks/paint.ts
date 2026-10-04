@@ -1174,9 +1174,19 @@ const antics = (c: Canvas, s: Scene, f: Shape) => {
   }
 }
 
-// Moves the scene on one frame. Idle, only breath, blinks and glances; the chew,
-// the bounce, the arms and the motes run as fast as tokens arrive.
-export const step = (s: Scene, width: number, height: number) => {
+// The fewest pixels tall the art needs to show the whole monster, its hat included.
+const TALL = 28
+
+// The canvas the scene lives on: the one asked for, or, too short for the art (a wide,
+// short pane), one TALL pixels high and as much wider, which paint() shrinks to fit.
+const fit = (width: number, height: number) =>
+  height >= TALL ? ([width, height] as const) : ([Math.round((width * TALL) / height), TALL] as const)
+
+// Moves the scene on one frame of a `columns` by `rows` pixel canvas. Idle, only breath,
+// blinks and glances; the chew, the bounce, the arms and the motes run as fast as tokens arrive.
+export const step = (s: Scene, columns: number, rows: number) => {
+  const [width, height] = fit(columns, rows)
+
   s.tick += 1
   s.rate = s.rate * 0.85 + s.arrived * 0.15
   s.arrived = 0
@@ -2493,10 +2503,11 @@ const vein = (c: Canvas, f: Shape) => {
 }
 
 // Calling you: a blinking ! beside its head.
-const shout = (c: Canvas, f: Shape) => {
+// `shrink`: how many times smaller the frame is shown; the ! grows to stay a pixel wide.
+const shout = (c: Canvas, f: Shape, shrink: number) => {
   if (!f.calling || f.t % 10 >= 7) return
 
-  const scale = c.height >= 40 ? 2 : 1
+  const scale = Math.max(c.height >= 40 ? 2 : 1, Math.ceil(shrink))
 
   write(
     c,
@@ -2842,8 +2853,27 @@ const badge = (c: Canvas, rank: number) => {
   })
 }
 
-// One frame, `width` by `height` pixels, 0xRRGGBB each. Reads the scene, never moves it.
-export const paint = (s: Scene, width: number, height: number): Uint32Array => {
+// One frame, `columns` by `rows` pixels, 0xRRGGBB each: drawn on the scene's canvas
+// and, when that is bigger, shrunk to fit. Reads the scene, never moves it.
+export const paint = (s: Scene, columns: number, rows: number): Uint32Array => {
+  const [width, height] = fit(columns, rows)
+  const px = draw(s, width, height, height / rows)
+
+  if (height === rows) return px
+
+  const out = new Uint32Array(columns * rows)
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < columns; x++) {
+      out[y * columns + x] = px[Math.floor(((y + 0.5) * height) / rows) * width + Math.floor(((x + 0.5) * width) / columns)]!
+    }
+  }
+
+  return out
+}
+
+// `shrink`: how many times smaller the frame will be shown.
+const draw = (s: Scene, width: number, height: number, shrink: number) => {
   const c = new Canvas(width, height)
   const f = shape(s, width, height)
 
@@ -2893,11 +2923,12 @@ export const paint = (s: Scene, width: number, height: number): Uint32Array => {
 
   frenzy(c, f)
   hud(c, s)
-  shout(c, f)
+  shout(c, f, shrink)
   vein(c, f)
   flash(c, f)
-  // No level on an egg, and none in the corner while the big one shows.
-  badge(c, (f.egg >= 0 && f.egg < EGG) || f.leveling ? 0 : s.rank)
+  // No level on an egg, none in the corner while the big one shows, and none on a frame
+  // shrunk past reading (the readout says it).
+  badge(c, (f.egg >= 0 && f.egg < EGG) || f.leveling || shrink > 1 ? 0 : s.rank)
 
   return glitch(c.px, width, height, f)
 }

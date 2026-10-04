@@ -542,3 +542,24 @@ test('the crab paints at every pane size, tiny to large, in its own amber', () =
     if (width > 16) expect(px.includes(0xffb000)).toBe(true)
   }
 })
+
+test('a wide, short canvas keeps the whole monster in frame', () => {
+  for (const [width, height] of [[64, 12], [80, 14]] as const) {
+    for (const monster of ['cookie', 'slime', 'ghost', 'gremlin', 'crab']) {
+      // The monster is what changes with its color: its top and bottom rows.
+      const rows = (color: string) => {
+        const s = createScene({ monster, color })
+
+        s.belly = fed(0)
+        for (let i = 0; i < 30; i++) step(s, width, height)
+
+        return paint(s, width, height)
+      }
+      const [blue, red] = [rows('blue'), rows('red')]
+      const body = [...blue.keys()].filter(i => blue[i] !== red[i]).map(i => Math.floor(i / width))
+
+      expect(Math.min(...body)).toBeGreaterThan(0)
+      expect(Math.max(...body)).toBeLessThan(height - 1)
+    }
+  }
+})

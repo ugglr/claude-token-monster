@@ -764,7 +764,10 @@ const antics = (c, s, f) => {
     }
   }
 };
-const step = (s, width, height) => {
+const TALL = 28;
+const fit = (width, height) => height >= TALL ? [width, height] : [Math.round(width * TALL / height), TALL];
+const step = (s, columns, rows) => {
+  const [width, height] = fit(columns, rows);
   s.tick += 1;
   s.rate = s.rate * 0.85 + s.arrived * 0.15;
   s.arrived = 0;
@@ -1705,9 +1708,9 @@ const vein = (c, f) => {
     c.put(x + dx, y + dy, f.reddish ? 2899926 : 16726843);
   }
 };
-const shout = (c, f) => {
+const shout = (c, f, shrink) => {
   if (!f.calling || f.t % 10 >= 7) return;
-  const scale = c.height >= 40 ? 2 : 1;
+  const scale = Math.max(c.height >= 40 ? 2 : 1, Math.ceil(shrink));
   write(
     c,
     "!",
@@ -1951,7 +1954,19 @@ const badge = (c, rank) => {
     });
   });
 };
-const paint = (s, width, height) => {
+const paint = (s, columns, rows) => {
+  const [width, height] = fit(columns, rows);
+  const px = draw(s, width, height, height / rows);
+  if (height === rows) return px;
+  const out = new Uint32Array(columns * rows);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < columns; x++) {
+      out[y * columns + x] = px[Math.floor((y + 0.5) * height / rows) * width + Math.floor((x + 0.5) * width / columns)];
+    }
+  }
+  return out;
+};
+const draw = (s, width, height, shrink) => {
   const c = new Canvas(width, height);
   const f = shape(s, width, height);
   world(c, f);
@@ -1989,10 +2004,10 @@ const paint = (s, width, height) => {
   }
   frenzy(c, f);
   hud(c, s);
-  shout(c, f);
+  shout(c, f, shrink);
   vein(c, f);
   flash(c, f);
-  badge(c, f.egg >= 0 && f.egg < EGG || f.leveling ? 0 : s.rank);
+  badge(c, f.egg >= 0 && f.egg < EGG || f.leveling || shrink > 1 ? 0 : s.rank);
   return glitch(c.px, width, height, f);
 };
 const frenzy = (c, { t, cx, cy, rx, frenzy: k }) => {
