@@ -2,7 +2,7 @@
 // hooks/paint.ts, compiled to paint.js (the command is at the top of that file).
 // Each one gets its own scene, stepped at 10 frames a second like in the pane,
 // and fed a made-up session so it eats, burns, powers up and falls asleep.
-import { choke, createScene, finishTurn, hatch, hit, levelUp, paint, perk, pet as stroke, serve, startTurn, step, toolColor, typed, wait as calls, AMBER, BURP, BURST, EGG, LEVEL_UP, MINUTE, PALETTE, PROMPT, RED, SAD, STARVING, TEXT, THINKING, WARDROBE } from './paint.js'
+import { choke, createScene, fedUp, finishTurn, hatch, hit, levelUp, paint, perk, pet as stroke, serve, startTurn, step, toolColor, typed, wait as calls, AMBER, BURP, BURST, EGG, LEVEL_UP, MINUTE, PALETTE, PROMPT, RED, SAD, STARVING, TEXT, THINKING, WARDROBE } from './paint.js'
 
 const FPS = 10
 const COLORS = Object.keys(PALETTE)
@@ -549,6 +549,24 @@ const STATES = {
     p.doing = ''
     p.reply('x', '*gag* Read logs/build.json ~31k! d: diet', 40)
     yield* wait(40)
+    finishTurn(s)
+    yield* wait(30)
+  }),
+  fedup: loopForever(function* (p) {
+    const s = p.s
+    startTurn(s)
+    for (let i = 0; i < 2; i++) {
+      s.tools = new Map([['t', 'Bash']])
+      p.doing = 'Bash npm run build'
+      yield* wait(8, k => k < 3 && p.eat(60, toolColor('Bash')))
+      s.tools = new Map()
+      hit(s, true, s.at)
+      yield* wait(14)
+    }
+    fedUp(s)
+    p.doing = ''
+    p.reply('-', 'ugh. Bash npm run build failed again', 50)
+    yield* wait(50)
     finishTurn(s)
     yield* wait(30)
   }),

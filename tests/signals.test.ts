@@ -1,11 +1,14 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { choke, createScene, paint, step, wait } from '../hooks/paint'
+import { choke, createScene, fedUp, paint, step, wait } from '../hooks/paint'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { call, done, pane, text } from './harness'
 
 // The four signals: it calls you, its cache goes cold, it chokes, it is fed up.
+
+// Whether missing.ts turned up.
+let found = false
 
 // `answer`: a settings hook's decision on a permission dialog, when one answers it.
 const engine = (on: On, answer?: 'allow') => {
@@ -20,11 +23,11 @@ const engine = (on: On, answer?: 'allow') => {
   on('agent.list', () => ({ value: [] }) as never)
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
-  // huge.json is 25k tokens; missing.ts fails.
+  // huge.json is 25k tokens; missing.ts fails until it is `found`.
   on('tool.call', (_, e) => {
     const { file_path } = e as unknown as { file_path?: string }
 
-    return { result: {}, text: 'x'.repeat(file_path === 'huge.json' ? 100_000 : 400), isError: file_path === 'missing.ts' } as never
+    return { result: {}, text: 'x'.repeat(file_path === 'huge.json' ? 100_000 : 400), isError: file_path === 'missing.ts' && !found } as never
   })
 
   return mock.clock(on)
@@ -206,4 +209,42 @@ test('gagging, it turns green and coughs, then gets over it', () => {
 
   for (let i = 0; i < 40; i++) step(s, 46, 40)
   expect(s.bits.some(bit => bit.kind === 'puff')).toBe(false)
+})
+
+test('the same call failing twice in a row makes it fed up for a moment', async ($, on) => {
+  const clock = engine(on)
+  const ui = await pane($, 'desktop')
+
+  // Two different calls failing, or one failing with a success between, is no loop.
+  await call($, { tool: 'Read', file_path: 'missing.ts' })
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  found = true
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  found = false
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  expect(await ui.find(text(/failed again/))).toBeUndefined()
+
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  expect(await ui.find(text('ugh. Bash missing.ts failed again'))).toBeDefined()
+
+  await clock.advance(5000)
+  expect(await ui.find(text(/failed again/))).toBeUndefined()
+})
+
+test('fed up, it crosses its arms under a throbbing anger mark, at every size, then lets it go', () => {
+  for (const [width, height] of [[16, 12], [46, 40], [64, 44]] as const) {
+    const s = createScene({ monster: 'gremlin', color: 'blue' })
+
+    s.belly = fed
+    for (let i = 0; i < 20; i++) step(s, width, height)
+    expect(paint(s, width, height).includes(0xff3b3b)).toBe(false)
+
+    fedUp(s)
+    step(s, width, height)
+    if (width > 16) expect(paint(s, width, height).includes(0xff3b3b)).toBe(true)
+    expect(s.antic).toBeNull()
+
+    for (let i = 0; i < 60; i++) step(s, width, height)
+    expect(paint(s, width, height).includes(0xff3b3b)).toBe(false)
+  }
 })

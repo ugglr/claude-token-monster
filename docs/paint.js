@@ -16,6 +16,7 @@ const DOZE = 1800;
 const YAWN = 40;
 const CHEER = 26;
 const GAG = 24;
+const FED_UP = 50;
 const HOP = 12;
 const PERK = 18;
 const LEVEL_UP = 50;
@@ -145,7 +146,8 @@ const createScene = (look) => ({
   waiting: false,
   waitAt: -1e3,
   cache: null,
-  gagAt: -100
+  gagAt: -100,
+  fedUpAt: -100
 });
 const serve = (s, tokens, color, heats = true) => {
   if (tokens <= 0) return;
@@ -211,6 +213,10 @@ const choke = (s) => {
   s.gagAt = s.tick;
   s.activeAt = s.tick;
 };
+const fedUp = (s) => {
+  s.fedUpAt = s.tick;
+  s.activeAt = s.tick;
+};
 const wait = (s, isWaiting) => {
   if (isWaiting && !s.waiting) s.waitAt = s.tick;
   s.waiting = isWaiting;
@@ -227,7 +233,7 @@ const settle = (s) => {
   s.antic = null;
 };
 const comboShown = (s) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES;
-const lively = (s) => s.busy || s.waiting || s.heat > 0.02 || s.power > 0.02 || s.frenzy > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.gagAt < GAG || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
+const lively = (s) => s.busy || s.waiting || s.heat > 0.02 || s.power > 0.02 || s.frenzy > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.gagAt < GAG || s.tick - s.fedUpAt < FED_UP || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
 const shape = (s, width, height) => {
   const t = s.tick;
   const full = (s.belly?.percent ?? 0) / 100;
@@ -301,6 +307,7 @@ const shape = (s, width, height) => {
     thinking: s.busy && !eating,
     angry: t - s.errorAt < 20,
     gagging: t - s.gagAt < GAG,
+    fedUp: t - s.fedUpAt < FED_UP,
     blink: t - s.blinkAt < 3 && t - s.typedAt >= 15,
     // Gagging, it turns a little green.
     body: starving ? mix(PALETTE[s.look.color] ?? 4029439, 9080729, 0.55) : t - s.gagAt < GAG ? mix(PALETTE[s.look.color] ?? 4029439, 10212426, 0.4) : mix(PALETTE[s.look.color] ?? 4029439, rainbow(t * 0.08), s.frenzy * 0.4),
@@ -340,6 +347,7 @@ const mood = (s, f) => {
   if (f.gagging) return set("squeeze", "sad", 0, 0.8 + 0.2 * Math.sin(f.t * 1.3), -0.6, 0);
   if (f.bursting && f.power <= 0.5) return set("dizzy", "sad", 0, 0.35 + 0.15 * Math.sin(f.t * 0.3), -0.3, 0.3);
   if (f.angry && f.t - s.errorAt < 10) return set("squeeze", "sad", 0, 0.15, -0.8, 0);
+  if (f.fedUp) return set("open", "fierce", 0.55, 0, -0.45, 0);
   if (f.petting) {
     if (s.fuss === "stir") return set("closed", "none", 1, 0.1, 0.9, 1);
     if (s.fuss === "plead") return set("plead", "sad", 0, 0, -0.35, 0.6);
@@ -400,7 +408,7 @@ const typed = (s) => {
   s.typedAt = s.tick;
   return away;
 };
-const calm = (s, f) => !s.busy && !s.waiting && !f.eating && !f.typing && !f.perking && !f.cheering && !f.sleeping && !f.yawning && !f.starving && !f.angry && !f.gagging && !f.petting && !f.greeting && s.power < 0.05 && s.servings.length === 0 && s.motes.length === 0 && !comboShown(s);
+const calm = (s, f) => !s.busy && !s.waiting && !f.eating && !f.typing && !f.perking && !f.cheering && !f.sleeping && !f.yawning && !f.starving && !f.angry && !f.gagging && !f.fedUp && !f.petting && !f.greeting && s.power < 0.05 && s.servings.length === 0 && s.motes.length === 0 && !comboShown(s);
 const choose = (s, f) => {
   const night = daylight(s.hour) < 0.4;
   const options = Object.keys(ANTICS).filter(
@@ -1275,6 +1283,8 @@ const limbs = (c, f, s) => {
       hand = { x: ax + side * length * (0.6 + 0.35 * Math.sin(t * 0.9 + side)), y: ay - length * 1.1 };
     } else if (f.gagging) {
       hand = { x: f.mouth.x + side * rx * 0.3, y: f.mouth.y + ry * 0.35 };
+    } else if (f.fedUp) {
+      hand = { x: cx - side * rx * 0.35, y: cy + ry * 0.35 };
     } else if (f.cheering || f.leveling || s.finish?.text === "K.O." && t - s.finish.at < 30) hand = up;
     else if (f.frenzy > 0.5) {
       const whirl = t * 1.9 + (side > 0 ? Math.PI : 0);
@@ -1659,6 +1669,13 @@ const hud = (c, s) => {
     );
   }
 };
+const vein = (c, f) => {
+  if (!f.fedUp || f.back || f.t % 8 >= 6) return;
+  const [x, y] = [Math.round(f.cx + f.rx * 0.6), Math.round(Math.max(2, f.cy - f.ry * 0.75))];
+  for (const [dx, dy] of [[-1, -2], [-2, -1], [-1, -1], [1, -2], [1, -1], [2, -1], [-2, 1], [-1, 1], [-1, 2], [1, 1], [2, 1], [1, 2]]) {
+    c.put(x + dx, y + dy, f.reddish ? 2899926 : 16726843);
+  }
+};
 const shout = (c, f) => {
   if (!f.calling || f.t % 10 >= 7) return;
   const scale = c.height >= 40 ? 2 : 1;
@@ -1944,6 +1961,7 @@ const paint = (s, width, height) => {
   frenzy(c, f);
   hud(c, s);
   shout(c, f);
+  vein(c, f);
   flash(c, f);
   badge(c, f.egg >= 0 && f.egg < EGG || f.leveling ? 0 : s.rank);
   return glitch(c.px, width, height, f);
@@ -2039,6 +2057,7 @@ export {
   choke,
   createScene,
   encode,
+  fedUp,
   finishTurn,
   fondness,
   hatch,

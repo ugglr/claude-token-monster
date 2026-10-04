@@ -83,6 +83,8 @@ export type Scene = {
   cache: Cache | null
   // When it last gagged on a huge tool result.
   gagAt: number
+  // When the same call failing again made it fed up.
+  fedUpAt: number
 }
 
 type Point = { x: number; y: number }
@@ -117,6 +119,8 @@ const YAWN = 40
 const CHEER = 26
 // Frames it gags on a huge tool result.
 const GAG = 24
+// Frames it stays fed up with a call that keeps failing.
+const FED_UP = 50
 const HOP = 12
 const PERK = 18
 // A level-up, in frames: crouch, a spinning jump, the landing, then a pose.
@@ -266,6 +270,7 @@ export const createScene = (look: Look): Scene => ({
   waitAt: -1000,
   cache: null,
   gagAt: -100,
+  fedUpAt: -100,
 })
 
 // Tokens arriving: they heat the monster up and fly into its mouth. Typing only
@@ -364,6 +369,12 @@ export const choke = (s: Scene) => {
   s.activeAt = s.tick
 }
 
+// The same call failed again: it is fed up for a few seconds.
+export const fedUp = (s: Scene) => {
+  s.fedUpAt = s.tick
+  s.activeAt = s.tick
+}
+
 // Claude started or stopped waiting on the person.
 export const wait = (s: Scene, isWaiting: boolean) => {
   if (isWaiting && !s.waiting) s.waitAt = s.tick
@@ -404,6 +415,7 @@ export const lively = (s: Scene) =>
   (s.finish !== null && s.tick - s.finish.at < 18) ||
   s.antic !== null ||
   s.tick - s.gagAt < GAG ||
+  s.tick - s.fedUpAt < FED_UP ||
   s.tick - s.petAt < PET ||
   s.tick - s.greetAt < GREET ||
   Math.abs(s.shift) > 0.05 ||
@@ -501,6 +513,7 @@ const shape = (s: Scene, width: number, height: number) => {
     thinking: s.busy && !eating,
     angry: t - s.errorAt < 20,
     gagging: t - s.gagAt < GAG,
+    fedUp: t - s.fedUpAt < FED_UP,
     blink: t - s.blinkAt < 3 && t - s.typedAt >= 15,
     // Gagging, it turns a little green.
     body: starving
@@ -552,6 +565,7 @@ const mood = (s: Scene, f: Shape) => {
   if (f.gagging) return set('squeeze', 'sad', 0, 0.8 + 0.2 * Math.sin(f.t * 1.3), -0.6, 0)
   if (f.bursting && f.power <= 0.5) return set('dizzy', 'sad', 0, 0.35 + 0.15 * Math.sin(f.t * 0.3), -0.3, 0.3)
   if (f.angry && f.t - s.errorAt < 10) return set('squeeze', 'sad', 0, 0.15, -0.8, 0)
+  if (f.fedUp) return set('open', 'fierce', 0.55, 0, -0.45, 0)
   if (f.petting) {
     if (s.fuss === 'stir') return set('closed', 'none', 1, 0.1, 0.9, 1)
     if (s.fuss === 'plead') return set('plead', 'sad', 0, 0, -0.35, 0.6)
@@ -649,6 +663,7 @@ const calm = (s: Scene, f: Shape) =>
   !f.starving &&
   !f.angry &&
   !f.gagging &&
+  !f.fedUp &&
   !f.petting &&
   !f.greeting &&
   s.power < 0.05 &&
@@ -1893,6 +1908,9 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
     } else if (f.gagging) {
       // Clutching its throat.
       hand = { x: f.mouth.x + side * rx * 0.3, y: f.mouth.y + ry * 0.35 }
+    } else if (f.fedUp) {
+      // Arms crossed.
+      hand = { x: cx - side * rx * 0.35, y: cy + ry * 0.35 }
     } else if (f.cheering || f.leveling || (s.finish?.text === 'K.O.' && t - s.finish.at < 30)) hand = up
     else if (f.frenzy > 0.5) {
       // Flailing: each hand whirls on its own wild loop.
@@ -2413,6 +2431,17 @@ const hud = (c: Canvas, s: Scene) => {
   }
 }
 
+// Fed up: a throbbing anger mark on its brow, in blue on a red monster.
+const vein = (c: Canvas, f: Shape) => {
+  if (!f.fedUp || f.back || f.t % 8 >= 6) return
+
+  const [x, y] = [Math.round(f.cx + f.rx * 0.6), Math.round(Math.max(2, f.cy - f.ry * 0.75))]
+
+  for (const [dx, dy] of [[-1, -2], [-2, -1], [-1, -1], [1, -2], [1, -1], [2, -1], [-2, 1], [-1, 1], [-1, 2], [1, 1], [2, 1], [1, 2]] as const) {
+    c.put(x + dx, y + dy, f.reddish ? 0x2c3fd6 : 0xff3b3b)
+  }
+}
+
 // Calling you: a blinking ! beside its head.
 const shout = (c: Canvas, f: Shape) => {
   if (!f.calling || f.t % 10 >= 7) return
@@ -2815,6 +2844,7 @@ export const paint = (s: Scene, width: number, height: number): Uint32Array => {
   frenzy(c, f)
   hud(c, s)
   shout(c, f)
+  vein(c, f)
   flash(c, f)
   // No level on an egg, and none in the corner while the big one shows.
   badge(c, (f.egg >= 0 && f.egg < EGG) || f.leveling ? 0 : s.rank)

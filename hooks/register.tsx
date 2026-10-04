@@ -38,6 +38,7 @@ import {
   typed,
   wait,
   choke,
+  fedUp,
 } from './paint'
 import type { Fuss, Scene } from './paint'
 import { registerSound } from './sound'
@@ -443,6 +444,23 @@ const gag = async ($: EngineInterface, call: string, size: number) => {
   await reply($, 'x', `*gag* ${call.slice(0, 42 - tail.length)}${tail}`)
 }
 
+// The last call that failed, by tool and label: the same one failing again in a row
+// makes it fed up. It only shows; the model is never told.
+let failed = ''
+
+const tally = async ($: EngineInterface, call: string, isError: boolean) => {
+  if (!isError) {
+    if (call === failed) failed = ''
+    return
+  }
+
+  if (call === failed) {
+    fedUp(scene)
+    await reply($, '-', `ugh. ${call.slice(0, 30)} failed again`)
+  }
+  failed = call
+}
+
 // The calls waiting on the person, by tool and label: a permission dialog or a
 // question each, the main loop's or a subagent's.
 let asks: string[] = []
@@ -777,6 +795,7 @@ export const register: Register = on => {
       await answered($, call)
       serve(scene, tokens(ran.text), toolColor(e.tool))
       if (tokens(ran.text) >= HUGE) await gag($, call, tokens(ran.text))
+      await tally($, call, ran.isError === true)
 
       return ran
     }
@@ -796,6 +815,7 @@ export const register: Register = on => {
       hit(scene, ran.isError === true, await $.clock.now())
       serve(scene, tokens(ran.text), toolColor(e.tool))
       if (tokens(ran.text) >= HUGE) await gag($, call, tokens(ran.text))
+      await tally($, call, ran.isError === true)
       await update($, combo, () => scene.combo)
       lapse?.cancel()
       lapse = $.clock.after(COMBO_MS, () => void update($, combo, () => 0))
