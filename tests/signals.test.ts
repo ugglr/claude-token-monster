@@ -7,6 +7,9 @@ import { call, done, pane, text } from './harness'
 
 // The four signals: it calls you, its cache goes cold, it chokes, it is fed up.
 
+// What the engine answers the model when the person refuses a call at its dialog.
+const REFUSAL = "The user doesn't want to proceed with this tool use. The tool use was rejected."
+
 // Whether missing.ts turned up.
 let found = false
 
@@ -36,8 +39,8 @@ const engine = (on: On) => {
   on('agent.list', () => ({ value: [] }) as never)
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
-  // huge.json is 25k tokens; missing.ts fails until it is `found`, and so does a
-  // command the person refuses.
+  // huge.json is 25k tokens; missing.ts fails until it is `found`; the person refuses
+  // a `refused` command, and a hook a `blocked` one.
   on('tool.call', async (_, e) => {
     const { tool, tool_use_id, agentId, ...args } = e as unknown as Record<string, unknown> & { tool: string; tool_use_id: string; agentId?: string }
     const hold = held.get(key({ tool, ...args }))
@@ -49,9 +52,10 @@ const engine = (on: On) => {
       await hold.gate
     }
 
-    const isError = (args.file_path === 'missing.ts' && !found) || String(args.command).startsWith('refused')
+    if (String(args.command).startsWith('blocked')) return { deny: 'a hook said no' } as never
+    if (String(args.command).startsWith('refused')) return { result: {}, text: `${REFUSAL} STOP what you are doing.`, isError: true } as never
 
-    return { result: {}, text: 'x'.repeat(args.file_path === 'huge.json' ? 100_000 : 400), isError } as never
+    return { result: {}, text: 'x'.repeat(args.file_path === 'huge.json' ? 100_000 : 400), isError: args.file_path === 'missing.ts' && !found } as never
   })
 
   clock = mock.clock(on)
@@ -409,4 +413,54 @@ test('/clear forgets the last failure', async ($, on) => {
   await $.classic.SessionStart({ source: 'clear' } as never)
   await call($, { tool: 'Bash', file_path: 'missing.ts' })
   expect(await ui.find(text(/failed again/))).toBeUndefined()
+})
+
+test('an approved call failing twice is fed up, whether or not it showed it ran', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  for (let i = 0; i < 2; i++) await (await hold($, { tool: 'Bash', file_path: 'missing.ts' }))()
+  expect(await ui.find(text('ugh. Bash missing.ts failed again'))).toBeDefined()
+})
+
+test("a hook's refusal neither counts nor clears the last failure", async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  await call($, { tool: 'Bash', command: 'blocked rm -rf /' })
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  expect(await ui.find(text('ugh. Bash missing.ts failed again'))).toBeDefined()
+})
+
+test('a failure is the same call by tool and arguments, not by label', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  await call($, { tool: 'Bash', file_path: 'missing.ts', description: 'build', command: 'npm run a' })
+  await call($, { tool: 'Bash', file_path: 'missing.ts', description: 'build', command: 'npm run b' })
+  expect(await ui.find(text(/failed again/))).toBeUndefined()
+})
+
+test('/clear ends every wait', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+  const pending = await hold($, { tool: 'Bash', command: 'npm test' })
+
+  await $.classic.SessionStart({ source: 'clear' } as never)
+  expect(await ui.find(text(/waiting/))).toBeUndefined()
+  await pending()
+})
+
+test('a response that reads nothing from the cache sets it back to 5 minutes', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  await respond($, 100_000, 17_000)
+  await clock.advance(7 * 60_000)
+  await respond($, 117_000, 0)
+  // An hour now; then a miss, a new model say.
+  await respond($, 0, 117_000)
+  await clock.advance(6 * 60_000)
+  expect(await ui.find(text(/cold cache/))).toBeDefined()
 })

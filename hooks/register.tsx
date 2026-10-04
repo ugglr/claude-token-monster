@@ -416,7 +416,7 @@ const rally = async ($: EngineInterface, isListed = false) => {
 
 // The prompt cache lapses 5 minutes after a request, or an hour on some sessions;
 // the API does not say which. 5 minutes, until a response after a longer gap still
-// reads most of its prompt from the cache: then an hour, for the session.
+// reads most of its prompt from the cache: then an hour, until one reads none of it.
 const CACHE_SHORT = 5 * MINUTE
 const CACHE_LONG = 60 * MINUTE
 
@@ -427,8 +427,12 @@ let chill: Timer | undefined
 const warm = async ($: EngineInterface, sent: number, usage: ModelUsage) => {
   const prompt = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
   const last = await read($, cache)
+  // A response that read nothing from the cache (it lapsed, or the model changed) says
+  // nothing of how long it keeps: back to 5 minutes.
   const isLong =
-    last !== null && (last.ttl === CACHE_LONG || (sent - last.at > CACHE_SHORT && usage.cache_read_input_tokens > prompt / 2))
+    last !== null &&
+    usage.cache_read_input_tokens > 0 &&
+    (last.ttl === CACHE_LONG || (sent - last.at > CACHE_SHORT && usage.cache_read_input_tokens > prompt / 2))
   const kept = { at: sent, tokens: prompt + usage.output_tokens, ttl: isLong ? CACHE_LONG : CACHE_SHORT }
 
   scene.cache = await update($, cache, () => kept)
@@ -455,9 +459,9 @@ const gag = async ($: EngineInterface, call: string, size: number) => {
 }
 
 // Every tool call in flight, by its id: its tool, label and arguments, its loop ('' for
-// the main one, else the subagent's id), whether the person was asked, whether it showed
-// a sign of running, and whether a rule refused it.
-type Call = { tool: string; label: string; input: Record<string, unknown>; loop: string; asked: boolean; ran: boolean; refused: boolean }
+// the main one, else the subagent's id), whether the person was asked, and whether the
+// auto mode classifier refused it.
+type Call = { tool: string; label: string; input: Record<string, unknown>; loop: string; asked: boolean; refused: boolean }
 
 const calls = new Map<string, Call>()
 
@@ -465,24 +469,35 @@ const calls = new Map<string, Call>()
 const same = (args: unknown, call: Call) =>
   Object.entries((args ?? {}) as Record<string, unknown>).every(([key, value]) => JSON.stringify(value) === JSON.stringify(call.input[key]))
 
-// The last call that failed in each loop, by tool and label: the same one failing again,
-// with no success between, makes it fed up. It only shows; the model is never told.
+// A call as fed up counts it: its tool and all its arguments, never its label.
+const identity = ({ tool, input }: Call) => {
+  const { tool_use_id, agentId, consent, ...args } = input
+
+  return `${tool} ${JSON.stringify(args)}`
+}
+
+// The engine's own words when the person refuses a call at its dialog (the main loop's,
+// or a subagent's). No field says so; the result's text is the firmest sign there is.
+const REFUSED = /^(The user doesn't want to|Permission for this tool use was denied)/
+
+// The last call that failed in each loop: the same one failing again, with no success
+// between, makes it fed up. It only shows; the model is never told.
 const failed = new Map<string, string>()
 
-const tally = async ($: EngineInterface, call: Call, isError: boolean) => {
-  // A refusal, at the dialog or by a rule, is someone's say, not a failure. A call
-  // asked about that never showed a sign of running counts as refused.
-  if (isError && (call.refused || (call.asked && !call.ran))) return
-  if (!isError) {
+const tally = async ($: EngineInterface, call: Call, ran: { text?: string; isError?: boolean; deny?: unknown }) => {
+  // A refusal, at the dialog, by the classifier or by a hook, is someone's say: it
+  // neither counts as a failure nor clears one.
+  if (call.refused || 'deny' in ran || REFUSED.test(ran.text ?? '')) return
+  if (ran.isError !== true) {
     failed.delete(call.loop)
     return
   }
 
-  if (failed.get(call.loop) === call.label) {
+  if (failed.get(call.loop) === identity(call)) {
     fedUp(scene)
     await reply($, '-', `ugh. ${call.label.slice(0, 30)} failed again`)
   }
-  failed.set(call.loop, call.label)
+  failed.set(call.loop, identity(call))
 }
 
 // What a finished call fed it: a meal, maybe a gag, and a tally of failures.
@@ -491,7 +506,7 @@ const eat = async ($: EngineInterface, call: Call, ran: { text?: string; isError
 
   serve(scene, size, toolColor(call.tool))
   if (size >= HUGE) await gag($, call.label, size)
-  await tally($, call, ran.isError === true)
+  await tally($, call, ran)
 }
 
 // The calls waiting on the person, oldest first, by id: a permission dialog or a
@@ -519,12 +534,7 @@ const answered = async ($: EngineInterface, ids: readonly string[]) => {
 }
 
 // The first sign a call asked about runs: the person said yes.
-const runs = async ($: EngineInterface, id: string) => {
-  const call = calls.get(id)
-
-  if (call !== undefined) call.ran = true
-  await answered($, [id])
-}
+const runs = ($: EngineInterface, id: string) => answered($, [id])
 
 const CALLING = { eye: 'O', say: 'psst! me waiting for you' }
 const waitLine = (call: string) => `> waiting for you: ${call}`
@@ -863,10 +873,13 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A new conversation: its failures, and its cache, start over.
+  // A new conversation: its calls, waits, failures and cache start over.
   on('classic.SessionStart', async ($, e, next) => {
     if (e.source === 'clear') {
+      calls.clear()
+      asks = []
       failed.clear()
+      await show($)
       await forget($)
     }
 
@@ -884,7 +897,6 @@ export const register: Register = on => {
       input: e as unknown as Record<string, unknown>,
       loop: e.agentId ?? '',
       asked: false,
-      ran: false,
       refused: false,
     }
 
@@ -904,7 +916,6 @@ export const register: Register = on => {
       const ran = await next(e)
 
       await answered($, [id])
-      if ('deny' in ran) call.refused = true
       if (isMain) hit(scene, ran.isError === true, await $.clock.now())
       await eat($, call, ran)
       if (isMain) {
