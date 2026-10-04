@@ -40,7 +40,7 @@ const engine = (on: On) => {
     if (String(args.command).startsWith('ruled')) return { result: {}, text: 'Permission to use Bash with command ruled out has been denied.', isError: true } as never
     if (String(args.command).startsWith('refused')) return { result: {}, text: `${REFUSAL} STOP what you are doing.`, isError: true } as never
 
-    return { result: {}, text: 'x'.repeat(args.file_path === 'huge.json' ? 100_000 : 400), isError: args.file_path === 'missing.ts' && !found } as never
+    return { result: {}, text: 'x'.repeat(String(args.file_path).endsWith('huge.json') ? 100_000 : 400), isError: args.file_path === 'missing.ts' && !found } as never
   })
 
   clock = mock.clock(on)
@@ -465,4 +465,14 @@ test('resuming another conversation starts its waits, failures and cache over', 
   await call($, { tool: 'Bash', file_path: 'missing.ts' })
   expect(await ui.find(text(/failed again/))).toBeUndefined()
   await pending()
+})
+
+test('a gag line too long for a narrow readout beside the sprite counts as the two rows it takes', async ($, on) => {
+  engine(on)
+  await measure($)
+  const ui = await pane($, 'terminal', { bodyColumns: 53, bodyRows: 10 })
+
+  expect((await ui.find({ type: 'Raster' }))?.props).toMatchObject({ rows: 6 })
+  await call($, { tool: 'Read', file_path: 'src/fixtures/recorded/huge.json' })
+  expect((await ui.find({ type: 'Raster' }))?.props).toMatchObject({ rows: 7 })
 })

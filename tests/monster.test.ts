@@ -558,6 +558,7 @@ test('a wide, short canvas keeps the whole monster in frame', () => {
       const [blue, red] = [rows('blue'), rows('red')]
       const body = [...blue.keys()].filter(i => blue[i] !== red[i]).map(i => Math.floor(i / width))
 
+      expect(body.length).toBeGreaterThan(0)
       expect(Math.min(...body)).toBeGreaterThan(0)
       expect(Math.max(...body)).toBeLessThan(height - 1)
     }

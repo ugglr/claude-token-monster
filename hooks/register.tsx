@@ -1061,8 +1061,10 @@ export const register: Register = on => {
         used += w
       }
 
+      // What it says can wrap: a gag or a fed-up line runs past a narrow readout.
       return (
-        3 +
+        2 +
+        Math.ceil(say.length / columns) +
         legendLines +
         limits.length +
         1 +
