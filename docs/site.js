@@ -2,7 +2,7 @@
 // hooks/paint.ts, compiled to paint.js (the command is at the top of that file).
 // Each one gets its own scene, stepped at 10 frames a second like in the pane,
 // and fed a made-up session so it eats, burns, powers up and falls asleep.
-import { createScene, finishTurn, hatch, hit, levelUp, paint, perk, pet as stroke, serve, startTurn, step, toolColor, typed, AMBER, BURP, BURST, EGG, LEVEL_UP, MINUTE, PALETTE, PROMPT, RED, SAD, STARVING, TEXT, THINKING, WARDROBE } from './paint.js'
+import { createScene, finishTurn, hatch, hit, levelUp, paint, perk, pet as stroke, serve, startTurn, step, toolColor, typed, wait as calls, AMBER, BURP, BURST, EGG, LEVEL_UP, MINUTE, PALETTE, PROMPT, RED, SAD, STARVING, TEXT, THINKING, WARDROBE } from './paint.js'
 
 const FPS = 10
 const COLORS = Object.keys(PALETTE)
@@ -513,6 +513,22 @@ const STATES = {
       finishTurn(s)
       yield* wait(34)
     }
+  }),
+  call: loopForever(function* (p) {
+    const s = p.s
+    startTurn(s)
+    p.doing = 'Bash npm test'
+    yield* wait(15, () => p.eat(6, TEXT))
+    calls(s, true)
+    p.doing = 'waiting for you: Bash npm test'
+    p.reply('O', 'psst! me waiting for you', 70)
+    yield* wait(70)
+    calls(s, false)
+    p.doing = 'Bash npm test'
+    yield* wait(10, i => i < 4 && p.eat(90, toolColor('Bash')))
+    p.doing = ''
+    finishTurn(s)
+    yield* wait(30)
   }),
   hop: loopForever(function* (p) {
     startTurn(p.s)

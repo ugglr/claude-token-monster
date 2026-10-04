@@ -36,6 +36,7 @@ import {
   step,
   toolColor,
   typed,
+  wait,
 } from './paint'
 import type { Fuss, Scene } from './paint'
 import { registerSound } from './sound'
@@ -165,6 +166,8 @@ const born = atom({ plugin: 'token-monster', key: 'born' } as const, null)
 const egg = atom({ plugin: 'token-monster', key: 'hatching' } as const, false)
 // Whether the sound is on, for the s button's label; hooks/sound.tsx keeps it.
 const sound = atom({ plugin: 'token-monster', key: 'sound' } as const, false)
+// The call Claude waits on the person for, as the readout names it, or null.
+const waiting = atom({ plugin: 'token-monster', key: 'waiting' } as const, null)
 
 // What the sprite animates from. The readout draws from the atoms above, save the
 // helper count, which only ever changes together with `level`.
@@ -406,6 +409,30 @@ const rally = async ($: EngineInterface, isListed = false) => {
   }
 }
 
+// The calls waiting on the person, by tool and label: a permission dialog or a
+// question each, the main loop's or a subagent's.
+let asks: string[] = []
+
+const ask = async ($: EngineInterface, call: string) => {
+  asks.push(call)
+  wait(scene, true)
+  await update($, waiting, () => call)
+}
+
+// The person answered `call` (it ran or was denied), or everything ended at once.
+const answered = async ($: EngineInterface, call?: string) => {
+  if (call === undefined) asks = []
+  else if (asks.includes(call)) asks.splice(asks.indexOf(call), 1)
+  else return
+
+  if (asks.length === 0) {
+    wait(scene, false)
+    await update($, waiting, () => null)
+  }
+}
+
+const CALLING = { eye: 'O', say: 'psst! me waiting for you' }
+
 // Its answer to a pet, by how it took it; each pet says the next line.
 const FUSSES: Record<Fuss, { eye: string; lines: string[] }> = {
   purr: { eye: '^', lines: ['hehe, that tickles', '*purr*', 'more pets pls'] },
@@ -567,6 +594,7 @@ export const register: Register = on => {
     await update($, egg, () => false)
     await update($, chat, () => null)
     await update($, combo, () => 0)
+    await update($, waiting, () => null)
     saver?.cancel()
     saver = $.clock.every(BANK_MS, () => void bank($))
     await $.command.register({
@@ -637,9 +665,10 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('prompt.submit', ($, e, next) => {
+  on('prompt.submit', async ($, e, next) => {
     serve(scene, tokens(e.text), PROMPT)
     perk(scene)
+    await answered($)
 
     return next(e)
   })
@@ -680,6 +709,7 @@ export const register: Register = on => {
       finishTurn(scene, e.isAborted)
       await update($, combo, () => 0)
       await act($, '')
+      await answered($)
       await bank($)
     }
 
@@ -688,11 +718,25 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A dialog up for the person: the ask path raises this hook once the mode's own
+  // decider (the auto mode classifier) has not settled it. A settings hook that
+  // answered it asks no one.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const done = await next(e)
+
+    if (done.decision === undefined) await ask($, `${e.tool_name} ${label(e.tool_input as Record<string, unknown>)}`.trim())
+
+    return done
+  })
+
   // Every tool result is a meal; the main loop's calls chain into combos and power up.
   on('tool.call', async ($, e, next) => {
+    const call = `${e.tool} ${label(e as unknown as Record<string, unknown>)}`.trim()
+
     if (e.agentId !== undefined) {
       const ran = await next(e)
 
+      await answered($, call)
       serve(scene, tokens(ran.text), toolColor(e.tool))
 
       return ran
@@ -705,10 +749,11 @@ export const register: Register = on => {
       scene.tools.set(e.tool_use_id, e.tool)
       if (isAgent) inflight += 1
       await rally($)
-      await act($, `${e.tool} ${label(e as unknown as Record<string, unknown>)}`.trim())
+      await act($, call)
 
       const ran = await next(e)
 
+      await answered($, call)
       hit(scene, ran.isError === true, await $.clock.now())
       serve(scene, tokens(ran.text), toolColor(e.tool))
       await update($, combo, () => scene.combo)
@@ -753,14 +798,15 @@ export const register: Register = on => {
     const activity = await read($, doing)
     const power = await read($, level)
     const hits = await read($, combo)
+    const asked = await read($, waiting)
     const tint = hex(PALETTE[(await read($, look)).color] ?? 0x3d7bff)
-    const { eye, say } = voice(full, at, power, scene.minions)
+    const { eye, say } = asked !== null ? CALLING : voice(full, at, power, scene.minions)
     const [used, left] = bar(full.percent, 8)
     const pieces = [
       ...limits.map(limit => `  ${limitName(limit.kind)} ${Math.round(limit.percentUsed)}%`),
       '  /token-monster',
     ]
-    const head = `(${eye})(${eye}) ${activity !== '' ? `> ${activity}${onFire(hits)}` : say}`
+    const head = `(${eye})(${eye}) ${asked !== null ? `waiting for you: ${asked}` : activity !== '' ? `> ${activity}${onFire(hits)}` : say}`
     const meter = ` ${used}${left} ${full.percent}%`
     const room = e.props.bodyColumns - 2
     // What fits: the face and words first, cut short if they must, then the gauges.
@@ -796,10 +842,14 @@ export const register: Register = on => {
     const eaten = await read($, xp)
     const rank = levelOf(eaten)
     const isLoud = await read($, sound)
+    const asked = await read($, waiting)
+    // Waiting on the person outranks everything: that is what needs them now.
     // About to burst outranks super mode: that line is the /compact warning.
     // What it said back to a pet or a hello shows for a moment, over its mood; hatching, it cracks.
     const { eye, say } =
-      (await read($, chat)) ?? ((await read($, egg)) ? { eye: 'o', say: '*crack* ... *crack*' } : voice(full, at, power, helpers))
+      asked !== null
+        ? CALLING
+        : ((await read($, chat)) ?? ((await read($, egg)) ? { eye: 'o', say: '*crack* ... *crack*' } : voice(full, at, power, helpers)))
     const chain = onFire(hits)
     // The sprite takes up to 64 columns; the readout stays a 48 column block under it.
     const wide = Math.max(16, Math.min(64, e.props.bodyColumns))
@@ -903,11 +953,13 @@ export const register: Register = on => {
             {say}
           </Text>
           <Text dimColor wrap="truncate-end">
-            {activity !== ''
-              ? `> ${activity}${chain}`
-              : full.ate > 0
-                ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
-                : `fed ${span(at - full.fedAt)} ago`}
+            {asked !== null
+              ? `> waiting for you: ${asked}`
+              : activity !== ''
+                ? `> ${activity}${chain}`
+                : full.ate > 0
+                  ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
+                  : `fed ${span(at - full.fedAt)} ago`}
           </Text>
           {pie.length === 0 ? (
             row('belly', full.percent, `${kilo(full.tokens)}/${kilo(full.window)}`)

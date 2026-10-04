@@ -140,7 +140,9 @@ const createScene = (look) => ({
   rank: 0,
   rankUpAt: -1e3,
   eggDue: null,
-  eggAt: -1e3
+  eggAt: -1e3,
+  waiting: false,
+  waitAt: -1e3
 });
 const serve = (s, tokens, color, heats = true) => {
   if (tokens <= 0) return;
@@ -202,6 +204,11 @@ const hatch = (s, at) => {
   s.activeAt = s.tick;
   return true;
 };
+const wait = (s, isWaiting) => {
+  if (isWaiting && !s.waiting) s.waitAt = s.tick;
+  s.waiting = isWaiting;
+  s.activeAt = s.tick;
+};
 const hatching = (s) => s.tick - s.eggAt >= 0 && s.tick - s.eggAt < EGG;
 const settle = (s) => {
   s.arrived = 0;
@@ -213,7 +220,7 @@ const settle = (s) => {
   s.antic = null;
 };
 const comboShown = (s) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES;
-const lively = (s) => s.busy || s.heat > 0.02 || s.power > 0.02 || s.frenzy > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
+const lively = (s) => s.busy || s.waiting || s.heat > 0.02 || s.power > 0.02 || s.frenzy > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
 const shape = (s, width, height) => {
   const t = s.tick;
   const full = (s.belly?.percent ?? 0) / 100;
@@ -245,7 +252,8 @@ const shape = (s, width, height) => {
   const rx = rx0 * (1 + s.squash * 0.7) * pop * Math.max(0.14, Math.abs(spin)) * move.sx;
   const ry = ry0 * (1 - s.squash) * pop * move.sy;
   const hopP = (t - s.cheerAt) / HOP;
-  const hop = (hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0) + (flying ? Math.sin(Math.PI * flight) * r0 * 1.5 : 0);
+  const callP = (t - s.waitAt) % 15 / 8;
+  const hop = (hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0) + (flying ? Math.sin(Math.PI * flight) * r0 * 1.5 : 0) + (s.waiting && callP < 1 ? Math.sin(Math.PI * callP) * r0 * 0.3 : 0);
   const lift = (monster === "ghost" ? 3 + Math.sin(s.breathe * 1.3) * 1.4 : 0) + (eating ? Math.abs(Math.sin(s.bob)) * (0.3 + s.heat * 1.8) : 0) + s.power * 1.5 + hop + move.lift;
   const shake = s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2 * (1 + s.frenzy * 2)) : 0;
   const shuffle = monster === "crab" ? Math.round(Math.sin(s.breathe * 0.8) * 2) : 0;
@@ -295,6 +303,7 @@ const shape = (s, width, height) => {
     // Turned away, by an antic or mid level-up spin: no face to draw.
     back: move.back || spin < 0.3,
     petting: t - s.petAt < PET,
+    calling: s.waiting,
     greeting: t - s.greetAt < GREET,
     leveling,
     grown,
@@ -316,6 +325,7 @@ const mood = (s, f) => {
     blush
   });
   if (f.leveling) return set("happy", "none", 0, 0.85, 1, 1);
+  if (f.calling) return set("open", "none", 0, 0.55, 0.8, 0.5);
   if (f.bursting && f.power <= 0.5) return set("dizzy", "sad", 0, 0.35 + 0.15 * Math.sin(f.t * 0.3), -0.3, 0.3);
   if (f.angry && f.t - s.errorAt < 10) return set("squeeze", "sad", 0, 0.15, -0.8, 0);
   if (f.petting) {
@@ -378,7 +388,7 @@ const typed = (s) => {
   s.typedAt = s.tick;
   return away;
 };
-const calm = (s, f) => !s.busy && !f.eating && !f.typing && !f.perking && !f.cheering && !f.sleeping && !f.yawning && !f.starving && !f.angry && !f.petting && !f.greeting && s.power < 0.05 && s.servings.length === 0 && s.motes.length === 0 && !comboShown(s);
+const calm = (s, f) => !s.busy && !s.waiting && !f.eating && !f.typing && !f.perking && !f.cheering && !f.sleeping && !f.yawning && !f.starving && !f.angry && !f.petting && !f.greeting && s.power < 0.05 && s.servings.length === 0 && s.motes.length === 0 && !comboShown(s);
 const choose = (s, f) => {
   const night = daylight(s.hour) < 0.4;
   const options = Object.keys(ANTICS).filter(
@@ -518,6 +528,7 @@ const feel = (s, f, a) => {
   return p < 0.72 ? ["open", "none", 0, 0.5, 0.2, 0] : ["open", "sad", 0.2, 0, -0.6, 0];
 };
 const glance = (s, f) => {
+  if (f.calling) return { x: 0, y: 0 };
   if (f.petting) return s.fuss === "plead" ? { x: 0, y: -0.7 } : null;
   if (f.greeting) return { x: 0, y: 0 };
   const a = s.antic;
@@ -1245,7 +1256,9 @@ const limbs = (c, f, s) => {
     const up = { x: ax + side * length * 0.7, y: ay - length * 1.05 + Math.sin(t * 0.8 + side) * 0.8 };
     const posed = pose(s, f, side, ax, ay, length, rest);
     let hand = rest;
-    if (f.cheering || f.leveling || s.finish?.text === "K.O." && t - s.finish.at < 30) hand = up;
+    if (f.calling) {
+      hand = { x: ax + side * length * (0.6 + 0.35 * Math.sin(t * 0.9 + side)), y: ay - length * 1.1 };
+    } else if (f.cheering || f.leveling || s.finish?.text === "K.O." && t - s.finish.at < 30) hand = up;
     else if (f.frenzy > 0.5) {
       const whirl = t * 1.9 + (side > 0 ? Math.PI : 0);
       hand = { x: ax + side * length * (0.55 + 0.45 * Math.cos(whirl)), y: ay - length * 0.9 * Math.sin(whirl * 1.3) };
@@ -1594,6 +1607,7 @@ const GLYPHS = {
   T: [7, 2, 2, 2, 2],
   U: [5, 5, 5, 5, 7],
   ".": [0, 0, 0, 0, 2],
+  "!": [2, 2, 2, 0, 2],
   "?": [7, 1, 3, 0, 2],
   " ": [0, 0, 0, 0, 0]
 };
@@ -1627,6 +1641,19 @@ const hud = (c, s) => {
       big ? 11735598 : 16742938
     );
   }
+};
+const shout = (c, f) => {
+  if (!f.calling || f.t % 10 >= 7) return;
+  const scale = c.height >= 40 ? 2 : 1;
+  write(
+    c,
+    "!",
+    Math.min(c.width - 3 * scale, Math.round(f.cx + f.rx + 1)),
+    Math.max(1, Math.round(headTop(f).y - 6 * scale)),
+    scale,
+    16769101,
+    16742938
+  );
 };
 const WARDROBE = [
   { level: 3, key: "bow", part: "a bow tie" },
@@ -1875,6 +1902,7 @@ const paint = (s, width, height) => {
   }
   frenzy(c, f);
   hud(c, s);
+  shout(c, f);
   flash(c, f);
   badge(c, f.egg >= 0 && f.egg < EGG || f.leveling ? 0 : s.rank);
   return glitch(c.px, width, height, f);
@@ -1985,5 +2013,6 @@ export {
   step,
   to256,
   toolColor,
-  typed
+  typed,
+  wait
 };

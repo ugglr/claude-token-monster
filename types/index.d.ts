@@ -41,6 +41,7 @@ declare module 'claude-code' {
       born: number | null
       hatching: boolean
       sound: boolean
+      waiting: string | null
     }
   }
 }

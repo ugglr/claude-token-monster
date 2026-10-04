@@ -75,6 +75,10 @@ export type Scene = {
   rankUpAt: number
   eggDue: number | null
   eggAt: number
+  // Claude is waiting on the person (a permission dialog or a question): it calls
+  // them, from the frame `waitAt`.
+  waiting: boolean
+  waitAt: number
 }
 
 type Point = { x: number; y: number }
@@ -252,6 +256,8 @@ export const createScene = (look: Look): Scene => ({
   rankUpAt: -1000,
   eggDue: null,
   eggAt: -1000,
+  waiting: false,
+  waitAt: -1000,
 })
 
 // Tokens arriving: they heat the monster up and fly into its mouth. Typing only
@@ -344,6 +350,13 @@ export const hatch = (s: Scene, at: number) => {
   return true
 }
 
+// Claude started or stopped waiting on the person.
+export const wait = (s: Scene, isWaiting: boolean) => {
+  if (isWaiting && !s.waiting) s.waitAt = s.tick
+  s.waiting = isWaiting
+  s.activeAt = s.tick
+}
+
 export const hatching = (s: Scene) => s.tick - s.eggAt >= 0 && s.tick - s.eggAt < EGG
 
 // What piled up while nothing was drawing is not a meal to replay.
@@ -362,6 +375,7 @@ const comboShown = (s: Scene) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRA
 // Whether anything moves beyond breathing and blinking, so a frame is worth painting.
 export const lively = (s: Scene) =>
   s.busy ||
+  s.waiting ||
   s.heat > 0.02 ||
   s.power > 0.02 ||
   s.frenzy > 0.02 ||
@@ -417,7 +431,12 @@ const shape = (s: Scene, width: number, height: number) => {
   const rx = rx0 * (1 + s.squash * 0.7) * pop * Math.max(0.14, Math.abs(spin)) * move.sx
   const ry = ry0 * (1 - s.squash) * pop * move.sy
   const hopP = (t - s.cheerAt) / HOP
-  const hop = (hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0) + (flying ? Math.sin(Math.PI * flight) * r0 * 1.5 : 0)
+  // Calling you, it jumps every second and a half.
+  const callP = ((t - s.waitAt) % 15) / 8
+  const hop =
+    (hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0) +
+    (flying ? Math.sin(Math.PI * flight) * r0 * 1.5 : 0) +
+    (s.waiting && callP < 1 ? Math.sin(Math.PI * callP) * r0 * 0.3 : 0)
   const lift =
     (monster === 'ghost' ? 3 + Math.sin(s.breathe * 1.3) * 1.4 : 0) +
     (eating ? Math.abs(Math.sin(s.bob)) * (0.3 + s.heat * 1.8) : 0) +
@@ -478,6 +497,7 @@ const shape = (s: Scene, width: number, height: number) => {
     // Turned away, by an antic or mid level-up spin: no face to draw.
     back: move.back || spin < 0.3,
     petting: t - s.petAt < PET,
+    calling: s.waiting,
     greeting: t - s.greetAt < GREET,
     leveling,
     grown,
@@ -507,6 +527,7 @@ const mood = (s: Scene, f: Shape) => {
   })
 
   if (f.leveling) return set('happy', 'none', 0, 0.85, 1, 1)
+  if (f.calling) return set('open', 'none', 0, 0.55, 0.8, 0.5)
   if (f.bursting && f.power <= 0.5) return set('dizzy', 'sad', 0, 0.35 + 0.15 * Math.sin(f.t * 0.3), -0.3, 0.3)
   if (f.angry && f.t - s.errorAt < 10) return set('squeeze', 'sad', 0, 0.15, -0.8, 0)
   if (f.petting) {
@@ -596,6 +617,7 @@ export const typed = (s: Scene) => {
 // Whether nothing at all is going on, so an antic may run.
 const calm = (s: Scene, f: Shape) =>
   !s.busy &&
+  !s.waiting &&
   !f.eating &&
   !f.typing &&
   !f.perking &&
@@ -810,6 +832,7 @@ const feel = (s: Scene, f: Shape, a: NonNullable<Scene['antic']>): Feel => {
 // Where the eyes look: up at you to plead, after the critter, the star or the
 // token, around the garden, or down at the readout under the picture.
 const glance = (s: Scene, f: Shape): Point | null => {
+  if (f.calling) return { x: 0, y: 0 }
   if (f.petting) return s.fuss === 'plead' ? { x: 0, y: -0.7 } : null
   if (f.greeting) return { x: 0, y: 0 }
 
@@ -1836,7 +1859,10 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
     const posed = pose(s, f, side, ax, ay, length, rest)
     let hand = rest
 
-    if (f.cheering || f.leveling || (s.finish?.text === 'K.O.' && t - s.finish.at < 30)) hand = up
+    if (f.calling) {
+      // Waving you over with both hands, in turn.
+      hand = { x: ax + side * length * (0.6 + 0.35 * Math.sin(t * 0.9 + side)), y: ay - length * 1.1 }
+    } else if (f.cheering || f.leveling || (s.finish?.text === 'K.O.' && t - s.finish.at < 30)) hand = up
     else if (f.frenzy > 0.5) {
       // Flailing: each hand whirls on its own wild loop.
       const whirl = t * 1.9 + (side > 0 ? Math.PI : 0)
@@ -2313,6 +2339,7 @@ const GLYPHS: Record<string, number[]> = {
   T: [7, 2, 2, 2, 2],
   U: [5, 5, 5, 5, 7],
   '.': [0, 0, 0, 0, 2],
+  '!': [2, 2, 2, 0, 2],
   '?': [7, 1, 3, 0, 2],
   ' ': [0, 0, 0, 0, 0],
 }
@@ -2353,6 +2380,23 @@ const hud = (c: Canvas, s: Scene) => {
       big ? 0xb3122e : 0xff7a1a,
     )
   }
+}
+
+// Calling you: a blinking ! beside its head.
+const shout = (c: Canvas, f: Shape) => {
+  if (!f.calling || f.t % 10 >= 7) return
+
+  const scale = c.height >= 40 ? 2 : 1
+
+  write(
+    c,
+    '!',
+    Math.min(c.width - 3 * scale, Math.round(f.cx + f.rx + 1)),
+    Math.max(1, Math.round(headTop(f).y - 6 * scale)),
+    scale,
+    0xffe04d,
+    0xff7a1a,
+  )
 }
 
 // What it wears as it grows up. Each part stays once earned; the crown takes the cap's place.
@@ -2705,6 +2749,7 @@ export const paint = (s: Scene, width: number, height: number): Uint32Array => {
 
   frenzy(c, f)
   hud(c, s)
+  shout(c, f)
   flash(c, f)
   // No level on an egg, and none in the corner while the big one shows.
   badge(c, (f.egg >= 0 && f.egg < EGG) || f.leveling ? 0 : s.rank)

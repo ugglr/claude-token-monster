@@ -35,6 +35,7 @@ Or by name: `/token-monster slime green`, `/token-monster diet`, `/token-monster
 - **Chewing:** how fast tokens stream right now, colored by tool.
 - **On fire:** tool calls landing back to back. Three or more end the turn in a K.O.
 - **Super mode:** subagents running. Each one shows up as a little helper that feeds it. With the rate pegged too, it goes into a full frenzy.
+- **Calling you:** Claude is waiting on you, at a permission dialog or a question. It waves both hands and hops, a ! blinks beside its head, and the readout names the call. It stops when you answer.
 - **Levels:** it grows with every token it eats, across sessions, and earns a bow tie, a propeller cap, a crown, a cape and a halo. Each session starts with an egg.
 
 It also sleeps when nothing happens, waves when you come back, and does little antics while it waits.
@@ -51,6 +52,7 @@ Mods are not sandboxed, so read the code before you install any mod. This one re
 - each tool call's name and its file path, description, command, URL, search pattern or prompt, shown in the readout and the diet
 - the status line's context, limit and cost figures, and the `/context` breakdown with the auto-compact point (a local estimate, no request)
 - the running subagents, and the `COLORTERM` variable to pick colors
+- when a permission dialog or a question opens for you, with the tool and its label
 - the conversation's tool results when you open the diet, and the conversation on a diet `/compact`
 
 It stores your monster and color, the tokens it has eaten, whether sound is on, and whether you've seen the sound tip. Sound is off by default and plays through `afplay` on macOS. No network calls.

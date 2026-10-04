@@ -85,6 +85,7 @@
           <button type="button" class="row" data-state="hello" aria-pressed="false"><span class="see">A wave hello</span><span class="means">You started typing after two quiet minutes.</span></button>
           <button type="button" class="row" data-state="thinking" aria-pressed="false"><span class="see">Hand on its chin</span><span class="means">Claude is thinking, and nothing has streamed yet.</span></button>
           <button type="button" class="row" data-state="fire" aria-pressed="false"><span class="see">On fire</span><span class="means">A combo: tool calls landing back to back. Flames climb higher with every hit. Three or more end the turn in a K.O.; a failed tool call makes it flinch, with a COUNTER.</span></button>
+          <button type="button" class="row" data-state="call" aria-pressed="false"><span class="see">Waving, hopping, a !</span><span class="means">Claude is waiting on you: a permission dialog or a question is open, the main conversation's or a subagent's. The readout names the call. It stops when you answer.</span></button>
           <button type="button" class="row" data-state="hop" aria-pressed="false"><span class="see">A happy hop</span><span class="means">A turn finished. Sparkles.</span></button>
           <button type="button" class="row" data-state="super" aria-pressed="false"><span class="see">Super mode</span><span class="means">Subagents power it up: a golden flame aura, spiky gold hair and teal eyes. Each running subagent, or three tools at once, adds a level, up to three. Each subagent is a little helper in its own color that dances beside it and tosses it a token now and then.</span></button>
           <button type="button" class="row" data-state="frenzy" aria-pressed="false"><span class="see">Frenzy</span><span class="means">The token rate pegged while subagents run. Tokens pour in from every edge, the picture shakes and splits into red and blue, and its body cycles through every color. It calms down as the rate drops.</span></button>
@@ -221,6 +222,7 @@ claude plugin update token-monster@token-monster</code></pre>
           <li><strong>The context, limit and cost figures</strong> Claude Code already shows in its status line.</li>
           <li><strong>The context by category</strong>, as <code>/context</code> shows it, and <strong>the auto-compact point</strong>. Both come from a local estimate; no request is sent.</li>
           <li><strong>The list of running subagents</strong>, for super mode.</li>
+          <li><strong>When a permission dialog or a question opens for you</strong>, with the tool and its label, so it can call you.</li>
           <li><strong>The <code>COLORTERM</code> environment variable</strong>, to pick colors on terminals with 256 colors.</li>
           <li><strong>The conversation's tool results</strong>, when you open the diet, to list them; and on a diet <code>/compact</code>, the conversation, to replace the results you picked.</li>
         </ul>
