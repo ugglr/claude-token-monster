@@ -1227,6 +1227,7 @@ const limbs = (c, f, s) => {
   const { monster, cx, cy, rx, ry, r0, t, body, floor, feet } = f;
   const thick = Math.max(1.2, r0 * 0.15);
   const length = r0 * 0.6;
+  const reach = thick * 3.8;
   if (feet > 0 && monster !== "crab") {
     for (const side of [-1, 1]) {
       const tap = f.thinking && side === 1 && t % 10 < 3 ? 1 : 0;
@@ -1259,7 +1260,6 @@ const limbs = (c, f, s) => {
     } else if (f.thinking && side === 1) hand = { x: f.mouth.x + rx * 0.3, y: f.mouth.y + ry * 0.28 };
     else if (f.sleeping) hand = { x: ax + side * length * 0.2, y: ay + length * 0.7 };
     if (crab) {
-      const reach = thick * 3.8;
       hand = {
         x: side > 0 ? Math.min(hand.x, c.width - 1 - reach) : Math.max(hand.x, reach),
         y: Math.max(hand.y, reach)
@@ -1277,15 +1277,14 @@ const limbs = (c, f, s) => {
     }
     if (crab) {
       const gape = f.eating ? Math.abs(Math.sin(s.chew)) : f.cheering ? 1 : 0.45 + 0.15 * Math.sin(t * 0.1 + side);
-      claw(c, hand.x, hand.y, side, gape, thick, arm);
+      claw(c, hand.x, hand.y, side, gape, thick, reach, arm);
     } else {
       c.blob(hand.x, hand.y, thick * 1.35, thick * 1.35, mix(arm, WHITE, 0.08), (nx, ny) => nx * nx + ny * ny < 1);
     }
   }
 };
-const claw = (c, x, y, side, gape, thick, color) => {
+const claw = (c, x, y, side, gape, thick, reach, color) => {
   const toward = side > 0 ? -Math.PI / 3 : -2 * Math.PI / 3;
-  const reach = thick * 3.8;
   c.blob(x, y, thick * 1.6, thick * 1.4, mix(color, WHITE, 0.08), (nx, ny) => nx * nx + ny * ny < 1);
   for (const [jaw, width] of [[-1, 0.62], [1, 0.45]]) {
     const angle = toward + jaw * side * (0.3 + gape * 0.5);
@@ -1663,7 +1662,7 @@ const CROWN = {
 };
 const headTop = (f) => ({
   x: f.cx,
-  y: f.monster === "cookie" ? f.cy - f.ry * 0.8 - eyeSize(f) : f.cy - f.ry * 0.9
+  y: f.monster === "cookie" ? f.cy - f.ry * 0.8 - eyeSize(f) : f.monster === "crab" ? f.cy - f.ry * 1.45 - eyeSize(f) : f.cy - f.ry * 0.9
 });
 const cape = (c, f) => {
   const { cx, cy, rx, ry, floor, wave, t } = f;

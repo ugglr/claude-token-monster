@@ -1808,6 +1808,8 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
   const { monster, cx, cy, rx, ry, r0, t, body, floor, feet } = f
   const thick = Math.max(1.2, r0 * 0.15)
   const length = r0 * 0.6
+  // How far a crab's pincer reaches past its wrist.
+  const reach = thick * 3.8
 
   if (feet > 0 && monster !== 'crab') {
     for (const side of [-1, 1]) {
@@ -1856,8 +1858,6 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
 
     if (crab) {
       // However small the pane, the whole pincer stays on screen.
-      const reach = thick * 3.8
-
       hand = {
         x: side > 0 ? Math.min(hand.x, c.width - 1 - reach) : Math.max(hand.x, reach),
         y: Math.max(hand.y, reach),
@@ -1882,7 +1882,7 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
       // Pincers: they snap as it eats, gape when it cheers, and rest half open.
       const gape = f.eating ? Math.abs(Math.sin(s.chew)) : f.cheering ? 1 : 0.45 + 0.15 * Math.sin(t * 0.1 + side)
 
-      claw(c, hand.x, hand.y, side, gape, thick, arm)
+      claw(c, hand.x, hand.y, side, gape, thick, reach, arm)
     } else {
       c.blob(hand.x, hand.y, thick * 1.35, thick * 1.35, mix(arm, WHITE, 0.08), (nx, ny) => nx * nx + ny * ny < 1)
     }
@@ -1890,10 +1890,9 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
 }
 
 // A crab's pincer at (x, y), pointing up and out on `side`: a heavy upper jaw and a
-// thinner lower one, `gape` 0 shut to 1 wide open.
-const claw = (c: Canvas, x: number, y: number, side: number, gape: number, thick: number, color: number) => {
+// thinner lower one, `reach` long, `gape` 0 shut to 1 wide open.
+const claw = (c: Canvas, x: number, y: number, side: number, gape: number, thick: number, reach: number, color: number) => {
   const toward = side > 0 ? -Math.PI / 3 : (-2 * Math.PI) / 3
-  const reach = thick * 3.8
 
   c.blob(x, y, thick * 1.6, thick * 1.4, mix(color, WHITE, 0.08), (nx, ny) => nx * nx + ny * ny < 1)
 
@@ -2399,10 +2398,15 @@ const CROWN = {
   big: ['W...W...W', 'L...G...D', 'LL.GRG.DD', 'LLGGGGGDD', 'LRGGBGGRD', 'DDDDDDDDD'],
 }
 
-// Where a hat sits: on top of the head, or on the cookie, up on its eye stalks.
+// Where a hat sits: on top of the head, or on the cookie and the crab, up on their eyes.
 const headTop = (f: Shape) => ({
   x: f.cx,
-  y: f.monster === 'cookie' ? f.cy - f.ry * 0.8 - eyeSize(f) : f.cy - f.ry * 0.9,
+  y:
+    f.monster === 'cookie'
+      ? f.cy - f.ry * 0.8 - eyeSize(f)
+      : f.monster === 'crab'
+        ? f.cy - f.ry * 1.45 - eyeSize(f)
+        : f.cy - f.ry * 0.9,
 })
 
 // A cape behind the body: from the shoulders to the ground, swaying as it breathes

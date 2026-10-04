@@ -517,6 +517,17 @@ test('the crab moves in: by name, in amber, with its claws up on desktop', async
   expect((await ui.find(text(' (\\/)       (\\/)')))?.props.color).toBe('#ffb000')
 })
 
+test("the crab's crown sits up on its eyes, where they cannot cover it", () => {
+  const s = createScene({ monster: 'crab', color: 'amber' })
+
+  s.belly = fed(0)
+  s.rank = 10
+  for (let i = 0; i < 40; i++) step(s, 46, 40)
+
+  // All three of the crown's white points show, none painted over by an eye.
+  expect(paint(s, 46, 40).filter(color => color === 0xfff8e8).length).toBe(3)
+})
+
 test('the crab paints at every pane size, tiny to large, in its own amber', () => {
   for (const [width, height] of [[16, 12], [40, 40], [64, 44]] as const) {
     const s = createScene({ monster: 'crab', color: 'amber' })
