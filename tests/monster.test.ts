@@ -563,3 +563,26 @@ test('a wide, short canvas keeps the whole monster in frame', () => {
     }
   }
 })
+
+test('a wide, short pane puts the sprite beside the readout; tall or narrow, it stacks', async ($, on) => {
+  engine(on)
+  await measure($, 60_000, [{ kind: 'five_hour', percentUsed: 60 }, { kind: 'seven_day', percentUsed: 20 }])
+
+  // Tall enough: the sprite on top, 64 columns wide.
+  const tall = await pane($, 'terminal', { bodyColumns: 71, bodyRows: 40 })
+
+  expect((await tall.find({ type: 'Raster' }))?.props).toMatchObject({ columns: 64, rows: 22 })
+  await tall.unmount()
+
+  // Too short for 10 sprite rows: beside the 9 line readout, as tall as it, twice as wide.
+  const short = await pane($, 'terminal', { bodyColumns: 71, bodyRows: 16 })
+
+  expect((await short.find({ type: 'Raster' }))?.props).toMatchObject({ columns: 18, rows: 9 })
+  expect(await short.find({ key: 'sound' })).toBeDefined()
+  await short.unmount()
+
+  // Too narrow for both side by side: stacked, as it was.
+  const narrow = await pane($, 'terminal', { bodyColumns: 46, bodyRows: 16 })
+
+  expect((await narrow.find({ type: 'Raster' }))?.props).toMatchObject({ columns: 46, rows: 6 })
+})

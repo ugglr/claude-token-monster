@@ -1024,29 +1024,9 @@ export const register: Register = on => {
         ? CALLING
         : ((await read($, chat)) ?? ((await read($, egg)) ? { eye: 'o', say: '*crack* ... *crack*' } : voice(full, at, power, helpers)))
     const chain = onFire(hits)
-    // The sprite takes up to 64 columns; the readout stays a 48 column block under it.
-    const wide = Math.max(16, Math.min(64, e.props.bodyColumns))
-    const columns = Math.min(48, wide)
-    const width = Math.max(6, Math.min(BAR, columns - 23))
     const remark = larder(limits)
-    const grown = Math.round(((eaten - xpFor(rank)) / (xpFor(rank + 1) - xpFor(rank))) * width)
     const tint = hex(PALETTE[color] ?? 0x3d7bff)
-    const row = (name: string, percent: number, tail: string) => {
-      const [used, left] = bar(percent, width)
-
-      return (
-        <Box>
-          <Text dimColor>{name.padEnd(8)}</Text>
-          <Text color={barColor(percent)}>{used}</Text>
-          <Text dimColor>{left}</Text>
-          <Text>
-            {` ${Math.round(percent)}%`.padStart(5)} {tail}
-          </Text>
-        </Box>
-      )
-    }
     const pie = await read($, slices)
-    const layers = stack(pie, full.window || 1, width)
     // Biggest first; free space is the empty part of the bar, not a legend entry.
     // Categories sharing a color merge (two MCP rows are one "mcp"); the five biggest
     // show, then the reserve.
@@ -1065,30 +1045,60 @@ export const register: Register = on => {
       ...parts.filter(part => part.kind === 'buffer'),
     ]
     const entry = (part: (typeof legend)[number]) => `■ ${part.short} ${kilo(part.tokens)}  `
-    // The readout's height, line by line, so the sprite takes only what is left and
-    // the buttons never fall off the bottom of the pane.
-    let legendLines = legend.length > 0 ? 1 : 0
-
-    for (let used = 0, i = 0; i < legend.length; i++) {
-      const w = entry(legend[i]!).length
-
-      if (used + w > columns && used > 0) {
-        legendLines += 1
-        used = 0
-      }
-      used += w
-    }
-
     const dietLine = dieting > 0 ? `eating ~${kilo(plate)} tokens from the context on your next /compact` : ''
-    const readoutLines =
-      3 +
-      legendLines +
-      limits.length +
-      1 +
-      (remark === undefined ? 0 : 1) +
-      Math.ceil(dietLine.length / columns) +
-      2 +
-      (e.props.isFocused ? 0 : 1)
+    // The readout's height at `columns` wide, line by line, so the sprite takes only
+    // what is left and the buttons never fall off the bottom of the pane.
+    const lines = (columns: number) => {
+      let legendLines = legend.length > 0 ? 1 : 0
+
+      for (let used = 0, i = 0; i < legend.length; i++) {
+        const w = entry(legend[i]!).length
+
+        if (used + w > columns && used > 0) {
+          legendLines += 1
+          used = 0
+        }
+        used += w
+      }
+
+      return (
+        3 +
+        legendLines +
+        limits.length +
+        1 +
+        (remark === undefined ? 0 : 1) +
+        Math.ceil(dietLine.length / columns) +
+        2 +
+        (e.props.isFocused ? 0 : 1)
+      )
+    }
+    // Stacked, the sprite takes up to 64 columns and the readout stays a 48 column block
+    // under it. A pane too short for that (fewer than 10 sprite rows) and wide enough
+    // for both puts the sprite beside the readout instead, as tall as it, twice as wide.
+    const { bodyColumns, scroll } = e.props
+    const wide = Math.max(16, Math.min(64, bodyColumns))
+    const beside = Math.min(48, bodyColumns - 1 - 2 * Math.min(scroll.bodyRows, lines(Math.min(48, wide))))
+    const isBeside =
+      e.surface === 'terminal' && 'Raster' in elements && scroll.bodyRows - lines(Math.min(48, wide)) - 1 < 10 && beside >= 40
+    const columns = isBeside ? beside : Math.min(48, wide)
+    const readoutLines = lines(columns)
+    const width = Math.max(6, Math.min(BAR, columns - 23))
+    const grown = Math.round(((eaten - xpFor(rank)) / (xpFor(rank + 1) - xpFor(rank))) * width)
+    const row = (name: string, percent: number, tail: string) => {
+      const [used, left] = bar(percent, width)
+
+      return (
+        <Box>
+          <Text dimColor>{name.padEnd(8)}</Text>
+          <Text color={barColor(percent)}>{used}</Text>
+          <Text dimColor>{left}</Text>
+          <Text>
+            {` ${Math.round(percent)}%`.padStart(5)} {tail}
+          </Text>
+        </Box>
+      )
+    }
+    const layers = stack(pie, full.window || 1, width)
     let sprite
 
     // Raster draws on the terminal only; elsewhere it is an empty fragment.
@@ -1097,14 +1107,15 @@ export const register: Register = on => {
 
       // After a hot reload the scene starts over: take the level from the banked tokens.
       if (scene.rank === 0) levelUp(scene, rank)
-      const rows = Math.max(6, Math.min(22, e.props.scroll.bodyRows - readoutLines - 1))
+      const rows = isBeside ? Math.min(scroll.bodyRows, readoutLines) : Math.max(6, Math.min(22, scroll.bodyRows - readoutLines - 1))
+      const across = isBeside ? Math.min(2 * rows, bodyColumns - 1 - columns) : wide
 
-      canvas = { columns: wide, rows }
+      canvas = { columns: across, rows }
       if (loop === undefined) {
         settle(scene)
         loop = $.clock.every(1000 / FPS, () => void frame($))
       }
-      sprite = <Raster key="sprite" columns={wide} rows={rows} cells={encode(paint(scene, wide, rows * 2), wide, rows, is256)} />
+      sprite = <Raster key="sprite" columns={across} rows={rows} cells={encode(paint(scene, across, rows * 2), across, rows, is256)} />
     } else {
       const drawing = ASCII[monster] ?? ASCII.cookie!
 
@@ -1117,98 +1128,109 @@ export const register: Register = on => {
       )
     }
 
-    // Centered in the pane: the sprite, then the readout as a block as wide as the sprite.
-    return (
+    const readout = (
+      <Box flexDirection="column" width={columns}>
+        <Text color={tint} bold>
+          {say}
+        </Text>
+        <Text dimColor wrap="truncate-end">
+          {asked !== null
+            ? waitLine(asked)
+            : activity !== ''
+              ? `> ${activity}${chain}`
+              : kept !== null
+                ? `cold cache: next prompt re-reads ~${kilo(kept.tokens)} uncached`
+                : full.ate > 0
+                  ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
+                  : `fed ${span(at - full.fedAt)} ago`}
+        </Text>
+        {pie.length === 0 ? (
+          row('belly', full.percent, `${kilo(full.tokens)}/${kilo(full.window)}`)
+        ) : (
+          <Box>
+            <Text dimColor>{'belly'.padEnd(8)}</Text>
+            {layers.content.map(part => (
+              <Text color={part.color}>{'█'.repeat(part.cells)}</Text>
+            ))}
+            <Text dimColor>{'░'.repeat(layers.free)}</Text>
+            {layers.reserve.map(part => (
+              <Text color={part.color}>{'▒'.repeat(part.cells)}</Text>
+            ))}
+            <Text>
+              {` ${Math.round(full.percent)}%`.padStart(5)} {`${kilo(full.tokens)}/${kilo(full.window)}`}
+            </Text>
+          </Box>
+        )}
+        {pie.length > 0 && (
+          <Box flexWrap="wrap" width={columns}>
+            {legend.map(part => (
+              <Text>
+                <Text color={part.color}>{part.kind === 'buffer' ? '▒' : '■'}</Text>
+                <Text dimColor>{entry(part).slice(1)}</Text>
+              </Text>
+            ))}
+          </Box>
+        )}
+        {limits.map(limit =>
+          row(
+            limitName(limit.kind),
+            limit.percentUsed,
+            limit.resetsAt === undefined ? '' : span(Math.max(0, Date.parse(limit.resetsAt) - at)),
+          ),
+        )}
+        {/* Its level and how far to the next, on a thin bar in its own color. */}
+        <Box>
+          <Text dimColor>{`Lv ${rank}`.padEnd(8)}</Text>
+          <Text color={tint}>{'━'.repeat(grown)}</Text>
+          <Text dimColor>{'─'.repeat(width - grown)}</Text>
+          <Text dimColor>{` ${kilo(xpFor(rank + 1) - eaten)} to Lv ${rank + 1}`}</Text>
+        </Box>
+        {remark !== undefined && <Text dimColor>{remark}</Text>}
+        {dieting > 0 && <Text color="yellow">{dietLine}</Text>}
+        {/* Plain buttons show their key: `m: Monster`. The keys work while the pane holds the keyboard. */}
+        <Box>
+          <Button
+            key="monster"
+            label="Monster"
+            hotkey="m"
+            plain
+            onPress={() => restyle($, current => ({ ...current, monster: after(NAMES, current.monster) }))}
+          />
+          <Text>  </Text>
+          <Button
+            key="color"
+            label="Color"
+            hotkey="c"
+            plain
+            onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
+          />
+          <Text>  </Text>
+          <Button key="pet" label="Pet" hotkey="p" plain onPress={() => stroke($)} />
+        </Box>
+        {/* Two rows of buttons, each inside 48 columns, so neither wraps. */}
+        <Box>
+          {/* diet.tsx and sound.tsx answer these presses: onPress cannot call into
+              them, as the engine refuses $ passed across an import. */}
+          <Button key="diet" label="Diet: free context" hotkey="d" plain onPress={() => undefined} />
+          <Text>  </Text>
+          <Button key="sound" label={`Sound: ${isLoud ? 'on' : 'off'}`} hotkey="s" plain onPress={() => undefined} />
+        </Box>
+        {!e.props.isFocused && <Text dimColor>ctrl+x tab or a click gives me the keys</Text>}
+      </Box>
+    )
+
+    // Side by side, the sprite left of the readout; stacked, both centered in the pane,
+    // the readout a block under the sprite.
+    return isBeside ? (
+      <Box>
+        {sprite}
+        <Text> </Text>
+        {readout}
+      </Box>
+    ) : (
       <Box flexDirection="column" alignItems="center">
         {sprite}
-        <Box flexDirection="column" width={columns}>
-          <Text color={tint} bold>
-            {say}
-          </Text>
-          <Text dimColor wrap="truncate-end">
-            {asked !== null
-              ? waitLine(asked)
-              : activity !== ''
-                ? `> ${activity}${chain}`
-                : kept !== null
-                  ? `cold cache: next prompt re-reads ~${kilo(kept.tokens)} uncached`
-                  : full.ate > 0
-                    ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
-                    : `fed ${span(at - full.fedAt)} ago`}
-          </Text>
-          {pie.length === 0 ? (
-            row('belly', full.percent, `${kilo(full.tokens)}/${kilo(full.window)}`)
-          ) : (
-            <Box>
-              <Text dimColor>{'belly'.padEnd(8)}</Text>
-              {layers.content.map(part => (
-                <Text color={part.color}>{'█'.repeat(part.cells)}</Text>
-              ))}
-              <Text dimColor>{'░'.repeat(layers.free)}</Text>
-              {layers.reserve.map(part => (
-                <Text color={part.color}>{'▒'.repeat(part.cells)}</Text>
-              ))}
-              <Text>
-                {` ${Math.round(full.percent)}%`.padStart(5)} {`${kilo(full.tokens)}/${kilo(full.window)}`}
-              </Text>
-            </Box>
-          )}
-          {pie.length > 0 && (
-            <Box flexWrap="wrap" width={columns}>
-              {legend.map(part => (
-                <Text>
-                  <Text color={part.color}>{part.kind === 'buffer' ? '▒' : '■'}</Text>
-                  <Text dimColor>{entry(part).slice(1)}</Text>
-                </Text>
-              ))}
-            </Box>
-          )}
-          {limits.map(limit =>
-            row(
-              limitName(limit.kind),
-              limit.percentUsed,
-              limit.resetsAt === undefined ? '' : span(Math.max(0, Date.parse(limit.resetsAt) - at)),
-            ),
-          )}
-          {/* Its level and how far to the next, on a thin bar in its own color. */}
-          <Box>
-            <Text dimColor>{`Lv ${rank}`.padEnd(8)}</Text>
-            <Text color={tint}>{'━'.repeat(grown)}</Text>
-            <Text dimColor>{'─'.repeat(width - grown)}</Text>
-            <Text dimColor>{` ${kilo(xpFor(rank + 1) - eaten)} to Lv ${rank + 1}`}</Text>
-          </Box>
-          {remark !== undefined && <Text dimColor>{remark}</Text>}
-          {dieting > 0 && <Text color="yellow">{dietLine}</Text>}
-          {/* Plain buttons show their key: `m: Monster`. The keys work while the pane holds the keyboard. */}
-          <Box>
-            <Button
-              key="monster"
-              label="Monster"
-              hotkey="m"
-              plain
-              onPress={() => restyle($, current => ({ ...current, monster: after(NAMES, current.monster) }))}
-            />
-            <Text>  </Text>
-            <Button
-              key="color"
-              label="Color"
-              hotkey="c"
-              plain
-              onPress={() => restyle($, current => ({ ...current, color: after(COLORS, current.color) }))}
-            />
-            <Text>  </Text>
-            <Button key="pet" label="Pet" hotkey="p" plain onPress={() => stroke($)} />
-          </Box>
-          {/* Two rows of buttons, each inside 48 columns, so neither wraps. */}
-          <Box>
-            {/* diet.tsx and sound.tsx answer these presses: onPress cannot call into
-                them, as the engine refuses $ passed across an import. */}
-            <Button key="diet" label="Diet: free context" hotkey="d" plain onPress={() => undefined} />
-            <Text>  </Text>
-            <Button key="sound" label={`Sound: ${isLoud ? 'on' : 'off'}`} hotkey="s" plain onPress={() => undefined} />
-          </Box>
-          {!e.props.isFocused && <Text dimColor>ctrl+x tab or a click gives me the keys</Text>}
-        </Box>
+        {readout}
       </Box>
     )
   })
