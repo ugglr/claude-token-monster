@@ -1109,8 +1109,9 @@ export const register: Register = on => {
 
       // After a hot reload the scene starts over: take the level from the banked tokens.
       if (scene.rank === 0) levelUp(scene, rank)
-      const rows = isBeside ? Math.min(scroll.bodyRows, readoutLines) : Math.max(6, Math.min(22, scroll.bodyRows - readoutLines - 1))
-      const across = isBeside ? Math.min(2 * rows, bodyColumns - 1 - columns) : wide
+      // Mid-resize the pane can report no rows at all; a Raster under one cell is refused.
+      const rows = isBeside ? Math.max(1, Math.min(scroll.bodyRows, readoutLines)) : Math.max(6, Math.min(22, scroll.bodyRows - readoutLines - 1))
+      const across = isBeside ? Math.max(1, Math.min(2 * rows, bodyColumns - 1 - columns)) : wide
 
       canvas = { columns: across, rows }
       if (loop === undefined) {

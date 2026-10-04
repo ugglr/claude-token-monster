@@ -587,3 +587,17 @@ test('a wide, short pane puts the sprite beside the readout; tall or narrow, it 
 
   expect((await narrow.find({ type: 'Raster' }))?.props).toMatchObject({ columns: 46, rows: 6 })
 })
+
+test('mid-resize, a pane with almost no rows still mounts a sprite the engine accepts', async ($, on) => {
+  engine(on)
+  await measure($, 60_000, [{ kind: 'five_hour', percentUsed: 60 }, { kind: 'seven_day', percentUsed: 20 }])
+
+  // The engine refuses a Raster under 1 column or row, and draws its own pane instead.
+  for (const bodyRows of [0, 1, 2]) {
+    const ui = await pane($, 'terminal', { bodyColumns: 71, bodyRows })
+    const { columns, rows } = (await ui.find({ type: 'Raster' }))!.props as { columns: number; rows: number }
+
+    expect(Number.isInteger(columns) && columns >= 1 && Number.isInteger(rows) && rows >= 1).toBe(true)
+    await ui.unmount()
+  }
+})

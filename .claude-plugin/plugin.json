@@ -1,6 +1,6 @@
 {
   "name": "token-monster",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "A pixel-art monster in a side pane that eats tokens and shows context, limits and activity at a glance",
   "author": {
     "name": "Carl Igelström",
