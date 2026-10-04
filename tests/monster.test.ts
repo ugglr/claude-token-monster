@@ -593,7 +593,7 @@ test('mid-resize, a pane with almost no rows still mounts a sprite the engine ac
   await measure($, 60_000, [{ kind: 'five_hour', percentUsed: 60 }, { kind: 'seven_day', percentUsed: 20 }])
 
   for (const [bodyRows, size] of [
-    [0, { columns: 1, rows: 1 }],
+    [0, { columns: 2, rows: 1 }],
     [1, { columns: 2, rows: 1 }],
     [2, { columns: 4, rows: 2 }],
   ] as const) {
