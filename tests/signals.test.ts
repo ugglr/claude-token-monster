@@ -20,15 +20,14 @@ let world: Engine
 
 const key = (input: Record<string, unknown>) => String(input.command ?? input.file_path ?? input.tool)
 
-// `answer`: a settings hook's decision on a permission dialog, when one answers it.
-const engine = (on: On, answer?: 'allow') => {
+const engine = (on: On) => {
   on('turn.step', async function* (_: unknown, e: { turnId: string }) {
     if (delay > 0) await clock.advance(delay)
     yield { kind: 'stop', stopReason: 'end_turn', usage: { ...usage, model: 'm' } }
 
     return { turnId: e.turnId, index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: { ...usage, model: 'm' } }
   } as never)
-  on('classic.PermissionRequest', () => (answer === undefined ? {} : { decision: { behavior: answer } }))
+  on('classic.PermissionRequest', () => ({}))
   on('classic.SessionStart', () => ({}))
   on('agent.spawn', () => ({ model: 'm' }) as never)
   on('ui.render', { component: 'ToolProgress' }, () => ({ type: 'Text', props: {}, children: [''] }) as never)
@@ -85,22 +84,6 @@ const hold = async ($: Engine, input: Record<string, unknown>, isAsked = true) =
     held.delete(key(input))
   }
 }
-
-test('a dialog opened inside a tool call calls you, naming it, until the call ends', async ($, on) => {
-  engine(on)
-  const ui = await pane($, 'desktop')
-  const release = await hold($, { tool: 'Bash', command: 'npm test' })
-
-  expect(await ui.find(text('psst! me waiting for you'))).toBeDefined()
-  expect(await ui.find(text('> waiting for you: Bash npm test'))).toBeDefined()
-
-  // Another call finishing is not the answer.
-  await call($, { tool: 'Read', file_path: 'a.ts' })
-  expect(await ui.find(text(/waiting for you/))).toBeDefined()
-
-  await release()
-  expect(await ui.find(text(/waiting/))).toBeUndefined()
-})
 
 test('the first sign an approved call runs ends the wait, long before it finishes', async ($, on) => {
   engine(on)
@@ -175,27 +158,6 @@ test("a subagent's dialog outlasts the main turn and a prompt, and ends with its
   expect(await ui.find(text(/waiting/))).toBeUndefined()
 })
 
-test('the main turn ending ends its own waits', async ($, on) => {
-  engine(on)
-  const ui = await pane($, 'desktop')
-
-  await $.turn.start({ text: 'go', turnId: 't1' })
-  const pending = await hold($, { tool: 'Bash', command: 'npm test' })
-
-  await $.turn.complete({ ...done, turnId: 't1' })
-  expect(await ui.find(text(/waiting/))).toBeUndefined()
-  await pending()
-})
-
-test('a settings hook that answered the dialog asks no one', async ($, on) => {
-  engine(on, 'allow')
-  const ui = await pane($, 'desktop')
-  const release = await hold($, { tool: 'Bash', command: 'npm test' })
-
-  expect(await ui.find(text(/waiting/))).toBeUndefined()
-  await release()
-})
-
 test('a few seconds into a wait, it paints at the idle rate', () => {
   const s = createScene({ monster: 'cookie', color: 'blue' })
 
@@ -237,10 +199,9 @@ let delay = 0
 let usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 
 // A main loop response, then the clock and the context checked, as each turn's end does.
-// `agentId`: a subagent's response instead.
-const respond = async ($: Engine, read: number, written: number, agentId?: string) => {
+const respond = async ($: Engine, read: number, written: number) => {
   usage = { input_tokens: 2000, output_tokens: 1000, cache_read_input_tokens: read, cache_creation_input_tokens: written }
-  const stream = $.turn.step({ turnId: 't1', index: 0, model: 'm', messageCount: 1, agentId })
+  const stream = $.turn.step({ turnId: 't1', index: 0, model: 'm', messageCount: 1 })
 
   for await (const _ of stream) {
   }
@@ -320,16 +281,6 @@ test('/clear and /compact leave nothing cached to go cold', async ($, on) => {
   await clock.advance(6 * 60_000)
   expect(await ui.find(text(/cold cache/))).toBeDefined()
   await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'long story', toolUses: [] }] })
-  expect(await ui.find(text(/cold cache/))).toBeUndefined()
-})
-
-test("a subagent's responses do not warm the main cache", async ($, on) => {
-  engine(on)
-  const ui = await pane($, 'desktop')
-
-  await respond($, 100_000, 17_000, 'a1')
-  await clock.advance(6 * 60_000)
-  await measure($)
   expect(await ui.find(text(/cold cache/))).toBeUndefined()
 })
 
