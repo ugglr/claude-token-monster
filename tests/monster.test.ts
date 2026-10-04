@@ -247,7 +247,7 @@ test('a turn that landed a combo ends in a K.O., however long the answer took', 
   hit(s, false, 0)
   hit(s, false, 9000)
   finishTurn(s)
-  expect(s.ended).toBe('cheer')
+  expect(s.cheerAt).toBe(s.tick)
   expect(s.finish?.at).toBe(600)
 
   hit(s, true, 20_000)

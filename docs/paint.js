@@ -122,7 +122,6 @@ const createScene = (look) => ({
   blush: 0,
   power: 0,
   frenzy: 0,
-  ended: "quiet",
   typedMs: -Infinity,
   combo: 0,
   best: 0,
@@ -182,7 +181,6 @@ const startTurn = (s) => {
   s.activeAt = s.tick;
 };
 const finishTurn = (s, isAborted = false) => {
-  s.ended = isAborted ? "quiet" : s.best >= 3 ? "ko" : "cheer";
   if (!isAborted) {
     if (s.best >= 3) s.finish = { text: "K.O.", at: s.tick };
     s.cheerAt = s.tick;

@@ -37,7 +37,7 @@ Or by name: `/token-monster slime green`, `/token-monster diet`, `/token-monster
 - **Gagging:** one tool result over 20k tokens. It turns green, clutches its throat and coughs, and the readout names the call and points you at the diet (`d`).
 - **Fed up:** the same tool call (same tool, same file or command) failed twice in a row. It crosses its arms under a throbbing anger mark for a few seconds. It only shows; Claude is never told.
 - **Super mode:** subagents running. Each one shows up as a little helper that feeds it. With the rate pegged too, it goes into a full frenzy.
-- **Calling you:** Claude is waiting on you, at a permission dialog or a question. It waves both hands and hops, a ! blinks beside its head, and the readout names the call. It stops when you answer.
+- **Calling you:** Claude is waiting on you, at a permission dialog or a question. It waves both hands and hops, a ! blinks beside its head, and the readout names the call; with sound on, one soft chime. It stops when you answer.
 - **Cold leftovers:** a frosted bowl with a snowflake beside it. The prompt cache has lapsed since Claude's last response (after 5 minutes, or an hour once it sees your session keeps it that long), so the readout estimates how many tokens your next prompt re-reads uncached.
 - **Levels:** it grows with every token it eats, across sessions, and earns a bow tie, a propeller cap, a crown, a cape and a halo. Each session starts with an egg.
 
@@ -58,7 +58,7 @@ Mods are not sandboxed, so read the code before you install any mod. This one re
 - when a permission dialog or a question opens for you, with the tool and its label
 - the conversation's tool results when you open the diet, and the conversation on a diet `/compact`
 
-It stores your monster and color, the tokens it has eaten, whether sound is on, and whether you've seen the sound tip. Sound is off by default and plays through `afplay` on macOS. No network calls.
+It stores your monster and color, the tokens it has eaten, whether sound is on, and whether you've seen the sound tip. Sound is off by default: one soft chime when Claude starts waiting on you, played through `afplay` on macOS. No network calls.
 
 ## Notes
 

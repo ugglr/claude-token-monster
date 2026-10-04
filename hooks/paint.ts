@@ -45,8 +45,6 @@ export type Scene = {
   power: number
   // Full tilt: the token rate pegged, with subagents on top. 0 to 1, eased.
   frenzy: number
-  // How the last main turn ended, for the sound: a K.O., a cheer, or nothing (aborted).
-  ended: 'ko' | 'cheer' | 'quiet'
   // When the person last typed, in $.clock ms (typedAt counts frames, which stop with the pane).
   typedMs: number
   combo: number
@@ -245,7 +243,6 @@ export const createScene = (look: Look): Scene => ({
   blush: 0,
   power: 0,
   frenzy: 0,
-  ended: 'quiet',
   typedMs: -Infinity,
   combo: 0,
   best: 0,
@@ -320,8 +317,6 @@ export const startTurn = (s: Scene) => {
 // or more ends in a K.O., however long the answer took.
 export const finishTurn = (s: Scene, isAborted = false) => {
   // An interrupted turn gets neither: no K.O., no cheer.
-  s.ended = isAborted ? 'quiet' : s.best >= 3 ? 'ko' : 'cheer'
-
   if (!isAborted) {
     if (s.best >= 3) s.finish = { text: 'K.O.', at: s.tick }
     s.cheerAt = s.tick

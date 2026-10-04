@@ -85,7 +85,7 @@
           <button type="button" class="row" data-state="hello" aria-pressed="false"><span class="see">A wave hello</span><span class="means">You started typing after two quiet minutes.</span></button>
           <button type="button" class="row" data-state="thinking" aria-pressed="false"><span class="see">Hand on its chin</span><span class="means">Claude is thinking, and nothing has streamed yet.</span></button>
           <button type="button" class="row" data-state="fire" aria-pressed="false"><span class="see">On fire</span><span class="means">A combo: tool calls landing back to back. Flames climb higher with every hit. Three or more end the turn in a K.O.; a failed tool call makes it flinch, with a COUNTER.</span></button>
-          <button type="button" class="row" data-state="call" aria-pressed="false"><span class="see">Waving, hopping, a !</span><span class="means">Claude is waiting on you: a permission dialog or a question is open, the main conversation's or a subagent's. The readout names the call. It stops when you answer.</span></button>
+          <button type="button" class="row" data-state="call" aria-pressed="false"><span class="see">Waving, hopping, a !</span><span class="means">Claude is waiting on you: a permission dialog or a question is open, the main conversation's or a subagent's. The readout names the call; with sound on, one soft chime. It stops when you answer.</span></button>
           <button type="button" class="row" data-state="cold" aria-pressed="false"><span class="see">A frosted bowl, a snowflake</span><span class="means">Its leftovers went cold: the prompt cache has lapsed since Claude's last response, after 5 minutes, or an hour once it sees your session keeps it that long. The readout estimates how many tokens your next prompt re-reads uncached.</span></button>
           <button type="button" class="row" data-state="gag" aria-pressed="false"><span class="see">Gagging, a little green</span><span class="means">One tool result over 20k tokens, too big to swallow. It clutches its throat and coughs, and the readout names the call and points you at the diet (<kbd>d</kbd>).</span></button>
           <button type="button" class="row" data-state="fedup" aria-pressed="false"><span class="see">Arms crossed, an anger mark</span><span class="means">Fed up: the same tool call, same tool and same file or command, failed twice in a row. It glares for a few seconds. It only shows; Claude is never told.</span></button>
@@ -190,7 +190,7 @@ claude plugin update token-monster@token-monster</code></pre>
 /token-monster gremlin
 /token-monster diet
 /token-monster sound on</code></pre>
-        <p>Sound is a set of small chiptune noises: a chomp as it eats, a burp after <code>/compact</code>, a K.O. jingle and more. It plays on macOS only.</p>
+        <p>Sound is one soft two-note chime, played once when Claude starts waiting on you, and never while you type. It plays on macOS only.</p>
         <p>The desktop app and IDEs show an ASCII version of the monster with the same readout. When the pane cannot show, a one-line version sits above the prompt, like the one at the bottom of this page.</p>
 
         <h3>Requirements</h3>
