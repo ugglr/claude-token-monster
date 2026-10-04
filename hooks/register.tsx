@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionContextUsage, Timer } from 'claude-code'
+import type { EngineInterface, ModelUsage, Register, SessionContextUsage, Timer } from 'claude-code'
 
-import type { Belly, Limit, Look, Slice } from '../types'
+import type { Belly, Cache, Limit, Look, Slice } from '../types'
 import { OLD_DIET, label, registerDiet } from './diet'
 import { PANE, PANE_OPEN, isDietWord, isSoundWord, kilo, tokens } from './format'
 import { levelOf, xpFor } from './grow'
@@ -166,6 +166,8 @@ const born = atom({ plugin: 'token-monster', key: 'born' } as const, null)
 const egg = atom({ plugin: 'token-monster', key: 'hatching' } as const, false)
 // Whether the sound is on, for the s button's label; hooks/sound.tsx keeps it.
 const sound = atom({ plugin: 'token-monster', key: 'sound' } as const, false)
+// The prompt cache as the main loop's last response left it.
+const cache = atom({ plugin: 'token-monster', key: 'cache' } as const, null)
 // The call Claude waits on the person for, as the readout names it, or null.
 const waiting = atom({ plugin: 'token-monster', key: 'waiting' } as const, null)
 
@@ -409,6 +411,26 @@ const rally = async ($: EngineInterface, isListed = false) => {
   }
 }
 
+// The prompt cache lapses 5 minutes after a response, or an hour on some sessions;
+// the API does not say which. 5 minutes, until a response after a longer gap still
+// reads most of its prompt from the cache: then an hour, for the session.
+const CACHE_SHORT = 5 * MINUTE
+const CACHE_LONG = 60 * MINUTE
+
+// A main loop response came, for a request sent at `sent`.
+const warm = async ($: EngineInterface, sent: number, usage: ModelUsage) => {
+  const at = await clocked($)
+  const prompt = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+  const isLong = (last: Cache | null) =>
+    last !== null && (last.ttl === CACHE_LONG || (sent - last.at > CACHE_SHORT && usage.cache_read_input_tokens > prompt / 2))
+
+  scene.cache = await update($, cache, last => ({
+    at,
+    tokens: prompt + usage.output_tokens,
+    ttl: isLong(last) ? CACHE_LONG : CACHE_SHORT,
+  }))
+}
+
 // The calls waiting on the person, by tool and label: a permission dialog or a
 // question each, the main loop's or a subagent's.
 let asks: string[] = []
@@ -577,6 +599,7 @@ export const register: Register = on => {
     }
 
     scene.look = await read($, look)
+    scene.cache = await read($, cache)
 
     // 24-bit color announces itself in COLORTERM; Apple Terminal, for one, does not have it.
     const depth = (await $.env.get('COLORTERM')) ?? ''
@@ -678,12 +701,15 @@ export const register: Register = on => {
   on('turn.step', async function* ($, e, next) {
     const stream = next(e)
     const names = new Map<number, string>()
+    // The main loop's requests are timed for the prompt cache.
+    const sent = e.agentId === undefined ? await $.clock.now() : null
 
     for await (const chunk of stream) {
       if (chunk.kind === 'text') serve(scene, tokens(chunk.text), TEXT)
       if (chunk.kind === 'thinking') serve(scene, tokens(chunk.text), THINKING)
       if (chunk.kind === 'tool') names.set(chunk.index, chunk.name)
       if (chunk.kind === 'input') serve(scene, tokens(chunk.json), toolColor(names.get(chunk.index)))
+      if (chunk.kind === 'stop' && sent !== null && chunk.usage !== null) await warm($, sent, chunk.usage)
 
       yield chunk
     }
@@ -843,6 +869,8 @@ export const register: Register = on => {
     const rank = levelOf(eaten)
     const isLoud = await read($, sound)
     const asked = await read($, waiting)
+    const kept = await read($, cache)
+    const isCold = !scene.busy && kept !== null && at - kept.at > kept.ttl
     // Waiting on the person outranks everything: that is what needs them now.
     // About to burst outranks super mode: that line is the /compact warning.
     // What it said back to a pet or a hello shows for a moment, over its mood; hatching, it cracks.
@@ -957,9 +985,11 @@ export const register: Register = on => {
               ? `> waiting for you: ${asked}`
               : activity !== ''
                 ? `> ${activity}${chain}`
-                : full.ate > 0
-                  ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
-                  : `fed ${span(at - full.fedAt)} ago`}
+                : isCold
+                  ? `cold cache: next prompt re-reads ~${kilo(kept.tokens)} uncached`
+                  : full.ate > 0
+                    ? `last bite +${kilo(full.ate)}, fed ${span(at - full.fedAt)} ago`
+                    : `fed ${span(at - full.fedAt)} ago`}
           </Text>
           {pie.length === 0 ? (
             row('belly', full.percent, `${kilo(full.tokens)}/${kilo(full.window)}`)

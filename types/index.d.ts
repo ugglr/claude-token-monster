@@ -18,6 +18,9 @@ export type Limit = { kind: string; percentUsed: number; resetsAt?: string }
 // One category of the context window, as /context lists it: `used`, `free`, or the
 // auto-compact `buffer`.
 export type Slice = { name: string; tokens: number; kind: string }
+// The prompt cache as the main loop's last response left it: when it came (ms), the
+// tokens the next request re-sends, and how long the cache keeps them (ms).
+export type Cache = { at: number; tokens: number; ttl: number }
 export type Dish = { id: string; tool: string; label: string; tokens: number }
 
 declare module 'claude-code' {
@@ -42,6 +45,7 @@ declare module 'claude-code' {
       hatching: boolean
       sound: boolean
       waiting: string | null
+      cache: Cache | null
     }
   }
 }

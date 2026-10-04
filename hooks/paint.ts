@@ -1,4 +1,4 @@
-import type { Belly, Limit, Look } from '../types'
+import type { Belly, Cache, Limit, Look } from '../types'
 
 // Everything the sprite reads. The gauges (belly, pantry, look, hour) come from
 // the hooks; serve(), hit(), perk() and the turn calls record what happened, and
@@ -79,6 +79,8 @@ export type Scene = {
   // them, from the frame `waitAt`.
   waiting: boolean
   waitAt: number
+  // The prompt cache, to see when it has gone cold.
+  cache: Cache | null
 }
 
 type Point = { x: number; y: number }
@@ -258,6 +260,7 @@ export const createScene = (look: Look): Scene => ({
   eggAt: -1000,
   waiting: false,
   waitAt: -1000,
+  cache: null,
 })
 
 // Tokens arriving: they heat the monster up and fly into its mouth. Typing only
@@ -498,6 +501,8 @@ const shape = (s: Scene, width: number, height: number) => {
     back: move.back || spin < 0.3,
     petting: t - s.petAt < PET,
     calling: s.waiting,
+    // The prompt cache has lapsed since the last response: the next one re-reads it all.
+    cold: !s.busy && s.cache !== null && s.at - s.cache.at > s.cache.ttl,
     greeting: t - s.greetAt < GREET,
     leveling,
     grown,
@@ -2632,6 +2637,39 @@ const egg = (c: Canvas, f: Shape, half = false) => {
   }
 }
 
+// A cold cache: its leftovers in a bowl beside it, frosted over, a snowflake twinkling above.
+const leftovers = (c: Canvas, f: Shape) => {
+  if (!f.cold) return
+
+  const w = Math.max(3, f.r0 * 0.55)
+  const h = Math.max(2, Math.round(w * 0.55))
+  const x = Math.min(c.width - w - 2, f.home + f.r0 * 1.15 + w)
+  const y = f.floor - h
+
+  // The food first, gone pale and icy, heaped over the rim.
+  for (let dx = -w * 0.8; dx <= w * 0.8; dx += 0.5) {
+    const top = Math.round((1 - (dx / w) ** 2) * h * 0.8)
+
+    for (let dy = 0; dy <= top; dy++) c.put(x + dx, y - dy, dy === top ? INK : dy === top - 1 ? 0xeaf6ff : 0x9fd0f5)
+  }
+  // A white bowl with a blue band.
+  for (let dy = 0; dy <= h; dy++) {
+    const half = w * Math.sqrt(1 - (dy / (h + 0.5)) ** 2)
+
+    for (let dx = -half; dx <= half; dx += 0.5) {
+      c.put(x + dx, y + dy, Math.abs(dx) > half - 0.7 || dy === h ? INK : dy === 1 ? 0x5b8bd6 : 0xdfe6f0)
+    }
+  }
+
+  if (f.t % 16 < 12) {
+    const [sx, sy] = [Math.round(x), Math.max(2, Math.round(y - h - 4))]
+
+    c.put(sx, sy, WHITE)
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [-2, 0], [0, 2], [0, -2]] as const) c.put(sx + dx, sy + dy, 0xcfeaff)
+    for (const [dx, dy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]] as const) c.put(sx + dx, sy + dy, 0x9fd0f5, 0.7)
+  }
+}
+
 // The shell it stood in, a moment after the burst, in front of its feet.
 const bowl = (c: Canvas, f: Shape) => {
   if (f.egg >= EGG_CRACK && f.egg < EGG) egg(c, { ...f, egg: 0 }, true)
@@ -2721,6 +2759,7 @@ export const paint = (s: Scene, width: number, height: number): Uint32Array => {
   cheer(c, f)
   blaze(c, f, false)
   shadow(c, f)
+  leftovers(c, f)
   wear(c, f, true)
   torso(c, f)
   limbs(c, f, s)

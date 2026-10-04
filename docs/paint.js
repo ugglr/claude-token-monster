@@ -142,7 +142,8 @@ const createScene = (look) => ({
   eggDue: null,
   eggAt: -1e3,
   waiting: false,
-  waitAt: -1e3
+  waitAt: -1e3,
+  cache: null
 });
 const serve = (s, tokens, color, heats = true) => {
   if (tokens <= 0) return;
@@ -304,6 +305,8 @@ const shape = (s, width, height) => {
     back: move.back || spin < 0.3,
     petting: t - s.petAt < PET,
     calling: s.waiting,
+    // The prompt cache has lapsed since the last response: the next one re-reads it all.
+    cold: !s.busy && s.cache !== null && s.at - s.cache.at > s.cache.ttl,
     greeting: t - s.greetAt < GREET,
     leveling,
     grown,
@@ -1817,6 +1820,29 @@ const egg = (c, f, half = false) => {
     }
   }
 };
+const leftovers = (c, f) => {
+  if (!f.cold) return;
+  const w = Math.max(3, f.r0 * 0.55);
+  const h = Math.max(2, Math.round(w * 0.55));
+  const x = Math.min(c.width - w - 2, f.home + f.r0 * 1.15 + w);
+  const y = f.floor - h;
+  for (let dx = -w * 0.8; dx <= w * 0.8; dx += 0.5) {
+    const top = Math.round((1 - (dx / w) ** 2) * h * 0.8);
+    for (let dy = 0; dy <= top; dy++) c.put(x + dx, y - dy, dy === top ? INK : dy === top - 1 ? 15398655 : 10473717);
+  }
+  for (let dy = 0; dy <= h; dy++) {
+    const half = w * Math.sqrt(1 - (dy / (h + 0.5)) ** 2);
+    for (let dx = -half; dx <= half; dx += 0.5) {
+      c.put(x + dx, y + dy, Math.abs(dx) > half - 0.7 || dy === h ? INK : dy === 1 ? 5999574 : 14673648);
+    }
+  }
+  if (f.t % 16 < 12) {
+    const [sx, sy] = [Math.round(x), Math.max(2, Math.round(y - h - 4))];
+    c.put(sx, sy, WHITE);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [-2, 0], [0, 2], [0, -2]]) c.put(sx + dx, sy + dy, 13626111);
+    for (const [dx, dy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) c.put(sx + dx, sy + dy, 10473717, 0.7);
+  }
+};
 const bowl = (c, f) => {
   if (f.egg >= EGG_CRACK && f.egg < EGG) egg(c, { ...f, egg: 0 }, true);
 };
@@ -1881,6 +1907,7 @@ const paint = (s, width, height) => {
   cheer(c, f);
   blaze(c, f, false);
   shadow(c, f);
+  leftovers(c, f);
   wear(c, f, true);
   torso(c, f);
   limbs(c, f, s);

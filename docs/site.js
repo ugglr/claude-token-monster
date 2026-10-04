@@ -200,7 +200,8 @@ class Pet {
       return `<span class="dim">${name.padEnd(8)}</span><span class="${tone(pct)}">${'█'.repeat(filled)}</span><span class="dim">${'░'.repeat(width - filled)}</span>${`${Math.round(pct)}%`.padStart(5)} ${tail}`
     }
     const chain = s.combo >= 2 ? `  on fire x${s.combo}` : ''
-    const second = this.doing !== '' ? `> ${this.doing}${chain}` : b.ate > 0 ? `last bite +${kilo(b.ate)}, fed ${span(s.at - b.fedAt)} ago` : `fed ${span(s.at - b.fedAt)} ago`
+    const cold = !s.busy && s.cache !== null && s.at - s.cache.at > s.cache.ttl
+    const second = this.doing !== '' ? `> ${this.doing}${chain}` : cold ? `cold cache: next prompt re-reads ~${kilo(s.cache.tokens)} uncached` : b.ate > 0 ? `last bite +${kilo(b.ate)}, fed ${span(s.at - b.fedAt)} ago` : `fed ${span(s.at - b.fedAt)} ago`
     // The belly bar split by category, the reserve at the far end; a legend under it.
     const parts = slicesOf(b)
     let room = width
@@ -529,6 +530,15 @@ const STATES = {
     p.doing = ''
     finishTurn(s)
     yield* wait(30)
+  }),
+  cold: loopForever(function* (p) {
+    const s = p.s
+    p.doing = ''
+    s.cache = { at: s.at, tokens: 118_000, ttl: 5 * MINUTE }
+    yield* wait(30)
+    s.cache.at = s.at - 6 * MINUTE
+    yield* wait(80)
+    s.cache = null
   }),
   hop: loopForever(function* (p) {
     startTurn(p.s)
