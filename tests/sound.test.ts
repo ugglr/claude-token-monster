@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { call, done, pane, run } from './harness'
+import { call, done, hold, holding, pane, run } from './harness'
 
 // The world beneath the monster with a speaker in it: every clip asked for is recorded.
 const world = (on: On, stored: Record<string, unknown> = {}) => {
@@ -36,15 +36,10 @@ const world = (on: On, stored: Record<string, unknown> = {}) => {
   on('turn.complete', () => ({ text: '' }))
   on('prompt.edit', (_, e) => ({ text: e.text, cursor: e.cursor }))
   on('classic.PermissionRequest', () => ({}))
-  // `npm test` opens a dialog and holds until the person answers.
   on('tool.call', async (_, e) => {
-    const input = e as unknown as { file_path?: string; command?: string }
+    const input = e as unknown as { file_path?: string }
 
-    if (input.command === 'npm test') {
-      await engine.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } } as never)
-      opened()
-      await answer
-    }
+    await holding(e)
 
     return { result: {}, text: 'x'.repeat(input.file_path === 'big.ts' ? 100_000 : 400), isError: input.file_path === 'missing.ts' } as never
   })
@@ -54,27 +49,8 @@ const world = (on: On, stored: Record<string, unknown> = {}) => {
 
 const read = ($: Engine, file_path: string) => call($, { tool: 'Read', file_path })
 
-let engine: Engine
-let opened = () => {}
-let answer = Promise.resolve()
-let running: Promise<unknown> = Promise.resolve()
-
-// Claude runs `npm test` and the engine asks the person about it; then they answer.
-const asks = async ($: Engine) => {
-  let go = () => {}
-
-  engine = $
-  answer = new Promise<void>(resolve => (go = resolve))
-  const there = new Promise<void>(resolve => (opened = resolve))
-
-  running = call($, { tool: 'Bash', command: 'npm test' })
-  await there
-  answers = async () => {
-    go()
-    await running
-  }
-}
-let answers = async () => {}
+// Claude runs `command` and the engine asks the person about it; resolves to their answer.
+const asks = ($: Engine, command = 'npm test') => hold($, { tool: 'Bash', command })
 
 const measure = ($: Engine, tokens: number) =>
   $.session.measure({ context: { tokens, window: 200_000, percent: Math.round(tokens / 2000) }, rateLimits: [], changed: ['context'] })
@@ -110,8 +86,7 @@ test('sound is off by default, and then nothing plays, a wait included', async (
   expect((await ui.find({ key: 'sound' }))?.text).toBe('Sound: off')
   expect((await ui.find({ key: 'sound' }))?.props).toMatchObject({ hotkey: 's', plain: true })
 
-  await asks($)
-  await answers()
+  await (await asks($))()
   expect(played).toEqual([])
 })
 
@@ -161,14 +136,12 @@ test('with sound on, Claude starting to wait on you chimes once, quietly, pane s
 
   await run($, 'sound on')
 
-  await asks($)
+  const first = await asks($)
+
   expect(played.splice(0)).toEqual(['sounds/call.wav'])
 
   // A second call asked about while it still waits is the same wait.
-  const first = answers
-
-  await asks($)
-  await answers()
+  await (await asks($, 'npm run lint'))()
   await first()
   expect(played.splice(0)).toEqual([])
 

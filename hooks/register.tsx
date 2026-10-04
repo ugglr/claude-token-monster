@@ -171,7 +171,7 @@ const egg = atom({ plugin: 'token-monster', key: 'hatching' } as const, false)
 const sound = atom({ plugin: 'token-monster', key: 'sound' } as const, false)
 // The prompt cache as the main loop's last response left it.
 const cache = atom({ plugin: 'token-monster', key: 'cache' } as const, null)
-// The call Claude waits on the person for, as the readout names it, or null.
+// The call Claude waits on the person for, as the readout names it, how many when more than one wait, or null.
 const waiting = atom({ plugin: 'token-monster', key: 'waiting' } as const, null)
 
 // What the sprite animates from. The readout draws from the atoms above, save the
@@ -416,7 +416,8 @@ const rally = async ($: EngineInterface, isListed = false) => {
 
 // The prompt cache lapses 5 minutes after a request, or an hour on some sessions;
 // the API does not say which. 5 minutes, until a response after a longer gap still
-// reads most of its prompt from the cache: then an hour, until one reads none of it.
+// reads most of its prompt from the cache: then an hour, until one reads less than
+// half (it lapsed but for a shared prefix, or the model changed).
 const CACHE_SHORT = 5 * MINUTE
 const CACHE_LONG = 60 * MINUTE
 
@@ -427,12 +428,8 @@ let chill: Timer | undefined
 const warm = async ($: EngineInterface, sent: number, usage: ModelUsage) => {
   const prompt = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
   const last = await read($, cache)
-  // A response that read nothing from the cache (it lapsed, or the model changed) says
-  // nothing of how long it keeps: back to 5 minutes.
-  const isLong =
-    last !== null &&
-    usage.cache_read_input_tokens > 0 &&
-    (last.ttl === CACHE_LONG || (sent - last.at > CACHE_SHORT && usage.cache_read_input_tokens > prompt / 2))
+  const isRead = usage.cache_read_input_tokens > prompt / 2
+  const isLong = isRead && last !== null && (last.ttl === CACHE_LONG || sent - last.at > CACHE_SHORT)
   const kept = { at: sent, tokens: prompt + usage.output_tokens, ttl: isLong ? CACHE_LONG : CACHE_SHORT }
 
   scene.cache = await update($, cache, () => kept)
@@ -451,11 +448,12 @@ const forget = async ($: EngineInterface) => {
 const HUGE = 20_000
 
 // It gags on `call`'s result, and names it with the way out: the diet.
-const gag = async ($: EngineInterface, call: string, size: number) => {
-  const tail = ` ~${kilo(size)}! d: diet`
+// The diet lists only the main conversation's results, so a subagent's gag names no way out.
+const gag = async ($: EngineInterface, call: Call, size: number) => {
+  const tail = ` ~${kilo(size)}!${call.loop === '' ? ' d: diet' : ''}`
 
   choke(scene)
-  await reply($, 'x', `*gag* ${call.slice(0, 42 - tail.length)}${tail}`)
+  await reply($, 'x', `*gag* ${call.label.slice(0, 42 - tail.length)}${tail}`)
 }
 
 // Every tool call in flight, by its id: its tool, label and arguments, its loop ('' for
@@ -469,16 +467,21 @@ const calls = new Map<string, Call>()
 const same = (args: unknown, call: Call) =>
   Object.entries((args ?? {}) as Record<string, unknown>).every(([key, value]) => JSON.stringify(value) === JSON.stringify(call.input[key]))
 
-// A call as fed up counts it: its tool and all its arguments, never its label.
+// A call as fed up counts it: its tool and all its arguments, never its label, kept as
+// a short hash rather than the arguments themselves.
 const identity = ({ tool, input }: Call) => {
   const { tool_use_id, agentId, consent, ...args } = input
+  let h = 5381
 
-  return `${tool} ${JSON.stringify(args)}`
+  for (const char of `${tool} ${JSON.stringify(args)}`) h = (Math.imul(h, 33) ^ char.charCodeAt(0)) >>> 0
+
+  return h.toString(36)
 }
 
-// The engine's own words when the person refuses a call at its dialog (the main loop's,
-// or a subagent's). No field says so; the result's text is the firmest sign there is.
-const REFUSED = /^(The user doesn't want to|Permission for this tool use was denied)/
+// The engine's own words when a call is refused: by the person at its dialog (the main
+// loop's or a subagent's), a deny rule, the classifier or a safety check. No field says
+// so; the result's text is the firmest sign there is.
+const REFUSED = /^(The user doesn't want to|Permission (to use|for this) )/
 
 // The last call that failed in each loop: the same one failing again, with no success
 // between, makes it fed up. It only shows; the model is never told.
@@ -487,7 +490,7 @@ const failed = new Map<string, string>()
 const tally = async ($: EngineInterface, call: Call, ran: { text?: string; isError?: boolean; deny?: unknown }) => {
   // A refusal, at the dialog, by the classifier or by a hook, is someone's say: it
   // neither counts as a failure nor clears one.
-  if (call.refused || 'deny' in ran || REFUSED.test(ran.text ?? '')) return
+  if (call.refused || ran.deny !== undefined || REFUSED.test(ran.text ?? '')) return
   if (ran.isError !== true) {
     failed.delete(call.loop)
     return
@@ -501,23 +504,24 @@ const tally = async ($: EngineInterface, call: Call, ran: { text?: string; isErr
 }
 
 // What a finished call fed it: a meal, maybe a gag, and a tally of failures.
-const eat = async ($: EngineInterface, call: Call, ran: { text?: string; isError?: boolean }) => {
+const eat = async ($: EngineInterface, call: Call, ran: { text?: string; isError?: boolean; deny?: unknown }) => {
   const size = tokens(ran.text)
 
   serve(scene, size, toolColor(call.tool))
-  if (size >= HUGE) await gag($, call.label, size)
+  if (size >= HUGE) await gag($, call, size)
   await tally($, call, ran)
 }
 
 // The calls waiting on the person, oldest first, by id: a permission dialog or a
-// question each, the main loop's or a subagent's. The readout names the last.
+// question each, the main loop's or a subagent's. The order dialogs queue in is the
+// engine's, so the readout names a call only when it is the one waiting.
 let asks: string[] = []
 
 const show = async ($: EngineInterface) => {
-  const last = asks.at(-1)
-
-  wait(scene, last !== undefined)
-  await update($, waiting, () => (last === undefined ? null : (calls.get(last)?.label ?? null)))
+  wait(scene, asks.length > 0)
+  await update($, waiting, () =>
+    asks.length === 0 ? null : asks.length === 1 ? (calls.get(asks[0]!)?.label ?? null) : `${asks.length} calls`,
+  )
 }
 
 const ask = async ($: EngineInterface, id: string) => {
@@ -868,14 +872,14 @@ export const register: Register = on => {
 
   // Drawing may not write state: the wait ends on the next tick of the clock.
   on('ui.render', { component: 'ToolProgress' }, ($, e, next) => {
-    $.clock.after(0, () => void runs($, e.props.tool_use_id))
+    if (asks.includes(e.props.tool_use_id)) $.clock.after(0, () => void runs($, e.props.tool_use_id))
 
     return next(e)
   })
 
-  // A new conversation: its calls, waits, failures and cache start over.
+  // A new conversation, or another resumed: its calls, waits, failures and cache start over.
   on('classic.SessionStart', async ($, e, next) => {
-    if (e.source === 'clear') {
+    if (e.source === 'clear' || e.source === 'resume') {
       calls.clear()
       asks = []
       failed.clear()

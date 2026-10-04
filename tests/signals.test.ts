@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { choke, createScene, fedUp, lively, paint, step, wait } from '../hooks/paint'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { call, done, pane, text } from './harness'
+import { call, done, hold, holding, ids, pane, text } from './harness'
 
 // The four signals: it calls you, its cache goes cold, it chokes, it is fed up.
 
@@ -12,16 +12,6 @@ const REFUSAL = "The user doesn't want to proceed with this tool use. The tool u
 
 // Whether missing.ts turned up.
 let found = false
-
-// Calls the test holds in flight, by command, file or tool: whether a dialog opens for
-// them first, a gate to let them go, and a mark once they are under way.
-const held = new Map<string, { isAsked: boolean; gate: Promise<void>; reached: () => void }>()
-// Each held call's id, as the engine gave it.
-const ids = new Map<string, string>()
-// The engine the held calls raise their dialogs on.
-let world: Engine
-
-const key = (input: Record<string, unknown>) => String(input.command ?? input.file_path ?? input.tool)
 
 const engine = (on: On) => {
   on('turn.step', async function* (_: unknown, e: { turnId: string }) {
@@ -40,19 +30,14 @@ const engine = (on: On) => {
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   // huge.json is 25k tokens; missing.ts fails until it is `found`; the person refuses
-  // a `refused` command, and a hook a `blocked` one.
+  // a `refused` command, a deny rule a `ruled` one, and a hook a `blocked` one.
   on('tool.call', async (_, e) => {
-    const { tool, tool_use_id, agentId, ...args } = e as unknown as Record<string, unknown> & { tool: string; tool_use_id: string; agentId?: string }
-    const hold = held.get(key({ tool, ...args }))
+    const args = e as unknown as Record<string, unknown>
 
-    if (hold !== undefined) {
-      ids.set(key({ tool, ...args }), tool_use_id)
-      if (hold.isAsked) await world.classic.PermissionRequest({ tool_name: tool, tool_input: args, agent_id: agentId } as never)
-      hold.reached()
-      await hold.gate
-    }
+    await holding(e)
 
     if (String(args.command).startsWith('blocked')) return { deny: 'a hook said no' } as never
+    if (String(args.command).startsWith('ruled')) return { result: {}, text: 'Permission to use Bash with command ruled out has been denied.', isError: true } as never
     if (String(args.command).startsWith('refused')) return { result: {}, text: `${REFUSAL} STOP what you are doing.`, isError: true } as never
 
     return { result: {}, text: 'x'.repeat(args.file_path === 'huge.json' ? 100_000 : 400), isError: args.file_path === 'missing.ts' && !found } as never
@@ -66,28 +51,6 @@ const engine = (on: On) => {
 let clock: ReturnType<typeof mock.clock>
 
 const fed = { percent: 30, fill: 30, tokens: 1, window: 1, ate: 0, fedAt: 0, burpAt: null, known: true, compactAt: null }
-
-// Starts `input` and holds it in flight, a dialog open for it unless `isAsked` is false;
-// resolves to a function that lets it go and waits for it to end.
-const hold = async ($: Engine, input: Record<string, unknown>, isAsked = true) => {
-  let go = () => {}
-  let there = () => {}
-  const gate = new Promise<void>(resolve => (go = resolve))
-  const reached = new Promise<void>(resolve => (there = resolve))
-
-  world = $
-  held.set(key(input), { isAsked, gate, reached: there })
-
-  const running = call($, input)
-
-  await reached
-
-  return async () => {
-    go()
-    await running
-    held.delete(key(input))
-  }
-}
 
 test('the first sign an approved call runs ends the wait, long before it finishes', async ($, on) => {
   engine(on)
@@ -116,7 +79,7 @@ test('the first sign an approved call runs ends the wait, long before it finishe
   await helper()
 })
 
-test('waits go by call, not label: the readout names the last call still waiting', async ($, on) => {
+test('waits go by call, not label; with more than one waiting the readout counts them', async ($, on) => {
   engine(on)
   const ui = await pane($, 'desktop')
   // Two calls with the same label; only the first is asked about.
@@ -128,7 +91,7 @@ test('waits go by call, not label: the readout names the last call still waiting
 
   const later = await hold($, { tool: 'Read', file_path: 'b.ts' })
 
-  expect(await ui.find(text('> waiting for you: Read b.ts'))).toBeDefined()
+  expect(await ui.find(text('> waiting for you: 2 calls'))).toBeDefined()
   await later()
   expect(await ui.find(text('> waiting for you: Bash build'))).toBeDefined()
 
@@ -320,9 +283,10 @@ test('a huge tool result makes it gag, naming the call and pointing at the diet'
   await clock.advance(5000)
   expect(await ui.find(text(/gag/))).toBeUndefined()
 
-  // A subagent's huge result too.
+  // A subagent's huge result too, with no diet to point at: it lists the main conversation only.
   await call($, { tool: 'Read', file_path: 'huge.json', agentId: 'a1' })
-  expect(await ui.find(text('*gag* Read huge.json ~25k! d: diet'))).toBeDefined()
+  expect(await ui.find(text('*gag* Read huge.json ~25k!'))).toBeDefined()
+  expect(await ui.find(text(/d: diet/))).toBeUndefined()
 })
 
 test('gagging, it turns green and coughs, then gets over it', () => {
@@ -463,4 +427,42 @@ test('a response that reads nothing from the cache sets it back to 5 minutes', a
   await respond($, 0, 117_000)
   await clock.advance(6 * 60_000)
   expect(await ui.find(text(/cold cache/))).toBeDefined()
+})
+
+test('a deny rule is no failure either', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  for (let i = 0; i < 2; i++) await call($, { tool: 'Bash', command: 'ruled out' })
+  expect(await ui.find(text(/failed again/))).toBeUndefined()
+})
+
+test('an hour cache drops back to 5 minutes when a response reads under half its prompt from it', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+
+  await respond($, 100_000, 17_000)
+  await clock.advance(7 * 60_000)
+  await respond($, 117_000, 0)
+  // It lapsed, all but the tools and system prompt it shares with the last.
+  await respond($, 40_000, 77_000)
+  await clock.advance(6 * 60_000)
+  expect(await ui.find(text(/cold cache/))).toBeDefined()
+})
+
+test('resuming another conversation starts its waits, failures and cache over', async ($, on) => {
+  engine(on)
+  const ui = await pane($, 'desktop')
+  const pending = await hold($, { tool: 'Bash', command: 'npm test' })
+
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  await respond($, 100_000, 17_000)
+  await clock.advance(6 * 60_000)
+  await $.classic.SessionStart({ source: 'resume' } as never)
+  expect(await ui.find(text(/waiting/))).toBeUndefined()
+  expect(await ui.find(text(/cold cache/))).toBeUndefined()
+
+  await call($, { tool: 'Bash', file_path: 'missing.ts' })
+  expect(await ui.find(text(/failed again/))).toBeUndefined()
+  await pending()
 })

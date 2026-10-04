@@ -1044,7 +1044,9 @@ class Canvas {
   }
   // A solid shape, lit from the upper left in cel-shaded bands, with an outline.
   // `inside` takes coordinates normalised to the shape's radii.
-  blob(cx, cy, rx, ry, color, inside, { alpha = 1, rim = INK, belly = false } = {}) {
+  blob(cx, cy, rx, ry, color, inside, { alpha = 1, belly = false } = {}) {
+    const [light2, light1, dark] = [ramp(color, 1.1), ramp(color, 0.45), ramp(color, -1.3)];
+    const [litEdge, shadeEdge] = [ramp(color, -3.2), mix(ramp(color, -3), INK, 0.5)];
     const [x0, x1] = [Math.floor(cx - rx * 1.6 - 2), Math.ceil(cx + rx * 1.6 + 2)];
     const [y0, y1] = [Math.floor(cy - ry * 1.6 - 2), Math.ceil(cy + ry * 1.6 + 2)];
     const at = (x, y) => inside((x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry);
@@ -1054,13 +1056,11 @@ class Canvas {
         const [nx, ny] = [(x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry];
         const nz = Math.sqrt(Math.max(0, 1 - Math.min(1, nx * nx + ny * ny)));
         const light = -0.45 * nx - 0.55 * ny + 0.7 * nz;
-        let tone = light > 0.82 ? ramp(color, 1.1) : light > 0.5 ? ramp(color, 0.45) : light > 0.12 ? color : ramp(color, -1.3);
+        let tone = light > 0.82 ? light2 : light > 0.5 ? light1 : light > 0.12 ? color : dark;
         if (belly && (nx / 0.55) ** 2 + ((ny - 0.38) / 0.5) ** 2 < 1) tone = mix(tone, WHITE, 0.25);
         if ((nx + 0.38) ** 2 + (ny + 0.48) ** 2 < 0.018) tone = mix(tone, WHITE, 0.7);
         const edge = !at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1);
-        const lit = -0.45 * nx - 0.55 * ny > 0.15;
-        const outline = rim !== INK ? mix(color, rim, 0.75) : lit ? ramp(color, -3.2) : mix(ramp(color, -3), INK, 0.5);
-        this.put(x, y, edge ? outline : tone, alpha);
+        this.put(x, y, edge ? -0.45 * nx - 0.55 * ny > 0.15 ? litEdge : shadeEdge : tone, alpha);
       }
     }
   }
