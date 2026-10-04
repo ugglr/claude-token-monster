@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { createScene, paint, step, wait } from '../hooks/paint'
+import { choke, createScene, paint, step, wait } from '../hooks/paint'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { call, done, pane, text } from './harness'
@@ -20,7 +20,12 @@ const engine = (on: On, answer?: 'allow') => {
   on('agent.list', () => ({ value: [] }) as never)
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
-  on('tool.call', () => ({ result: {}, text: 'x'.repeat(400) }) as never)
+  // huge.json is 25k tokens; missing.ts fails.
+  on('tool.call', (_, e) => {
+    const { file_path } = e as unknown as { file_path?: string }
+
+    return { result: {}, text: 'x'.repeat(file_path === 'huge.json' ? 100_000 : 400), isError: file_path === 'missing.ts' } as never
+  })
 
   return mock.clock(on)
 }
@@ -166,4 +171,39 @@ test('cold, a frosted bowl of leftovers sits beside it, at every size; busy, it 
     s.busy = true
     expect(paint(s, width, height).includes(0x5b8bd6)).toBe(false)
   }
+})
+
+test('a huge tool result makes it gag, naming the call and pointing at the diet', async ($, on) => {
+  const clock = engine(on)
+  const ui = await pane($, 'desktop')
+
+  await call($, { tool: 'Read', file_path: 'notes.md' })
+  expect(await ui.find(text(/gag/))).toBeUndefined()
+
+  await call($, { tool: 'Read', file_path: 'huge.json' })
+  expect(await ui.find(text('*gag* Read huge.json ~25k! d: diet'))).toBeDefined()
+
+  await clock.advance(5000)
+  expect(await ui.find(text(/gag/))).toBeUndefined()
+
+  // A subagent's huge result too.
+  await call($, { tool: 'Read', file_path: 'huge.json', agentId: 'a1' })
+  expect(await ui.find(text('*gag* Read huge.json ~25k! d: diet'))).toBeDefined()
+})
+
+test('gagging, it turns green and coughs, then gets over it', () => {
+  const s = createScene({ monster: 'cookie', color: 'blue' })
+
+  s.belly = fed
+  for (let i = 0; i < 20; i++) step(s, 46, 40)
+  const before = paint(s, 46, 40)
+
+  choke(s)
+  for (let i = 0; i < 4; i++) step(s, 46, 40)
+  expect(s.bits.some(bit => bit.kind === 'puff')).toBe(true)
+  // Its body in colors it never wore before: green-tinged.
+  expect(paint(s, 46, 40).filter(color => !before.includes(color)).length).toBeGreaterThan(50)
+
+  for (let i = 0; i < 40; i++) step(s, 46, 40)
+  expect(s.bits.some(bit => bit.kind === 'puff')).toBe(false)
 })

@@ -81,6 +81,8 @@ export type Scene = {
   waitAt: number
   // The prompt cache, to see when it has gone cold.
   cache: Cache | null
+  // When it last gagged on a huge tool result.
+  gagAt: number
 }
 
 type Point = { x: number; y: number }
@@ -113,6 +115,8 @@ const COMBO_FRAMES = 40
 const DOZE = 1800
 const YAWN = 40
 const CHEER = 26
+// Frames it gags on a huge tool result.
+const GAG = 24
 const HOP = 12
 const PERK = 18
 // A level-up, in frames: crouch, a spinning jump, the landing, then a pose.
@@ -261,6 +265,7 @@ export const createScene = (look: Look): Scene => ({
   waiting: false,
   waitAt: -1000,
   cache: null,
+  gagAt: -100,
 })
 
 // Tokens arriving: they heat the monster up and fly into its mouth. Typing only
@@ -353,6 +358,12 @@ export const hatch = (s: Scene, at: number) => {
   return true
 }
 
+// A tool result too big to swallow: it gags.
+export const choke = (s: Scene) => {
+  s.gagAt = s.tick
+  s.activeAt = s.tick
+}
+
 // Claude started or stopped waiting on the person.
 export const wait = (s: Scene, isWaiting: boolean) => {
   if (isWaiting && !s.waiting) s.waitAt = s.tick
@@ -392,6 +403,7 @@ export const lively = (s: Scene) =>
   comboShown(s) ||
   (s.finish !== null && s.tick - s.finish.at < 18) ||
   s.antic !== null ||
+  s.tick - s.gagAt < GAG ||
   s.tick - s.petAt < PET ||
   s.tick - s.greetAt < GREET ||
   Math.abs(s.shift) > 0.05 ||
@@ -447,7 +459,7 @@ const shape = (s: Scene, width: number, height: number) => {
     hop +
     move.lift
   const shake =
-    s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2 * (1 + s.frenzy * 2)) : 0
+    s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 || t - s.gagAt < GAG ? Math.round((hash(t, 1) - 0.5) * 2 * (1 + s.frenzy * 2)) : 0
   // A crab never stands still: it shuffles a step to the side and back.
   const shuffle = monster === 'crab' ? Math.round(Math.sin(s.breathe * 0.8) * 2) : 0
   const cx = width / 2 + shake + shuffle + Math.round(s.shift + move.dx)
@@ -488,10 +500,14 @@ const shape = (s: Scene, width: number, height: number) => {
     cheering: t - s.cheerAt < CHEER,
     thinking: s.busy && !eating,
     angry: t - s.errorAt < 20,
+    gagging: t - s.gagAt < GAG,
     blink: t - s.blinkAt < 3 && t - s.typedAt >= 15,
+    // Gagging, it turns a little green.
     body: starving
       ? mix(PALETTE[s.look.color] ?? 0x3d7bff, 0x8a8f99, 0.55)
-      : mix(PALETTE[s.look.color] ?? 0x3d7bff, rainbow(t * 0.08), s.frenzy * 0.4),
+      : t - s.gagAt < GAG
+        ? mix(PALETTE[s.look.color] ?? 0x3d7bff, 0x9bd44a, 0.4)
+        : mix(PALETTE[s.look.color] ?? 0x3d7bff, rainbow(t * 0.08), s.frenzy * 0.4),
     frenzy: s.frenzy,
     mouth: { x: cx, y: cy + ry * (monster === 'slime' ? 0.3 : monster === 'crab' ? 0.05 : 0.34) },
     // Where it stands at rest, and the middle of its body there, for the antics' props.
@@ -533,6 +549,7 @@ const mood = (s: Scene, f: Shape) => {
 
   if (f.leveling) return set('happy', 'none', 0, 0.85, 1, 1)
   if (f.calling) return set('open', 'none', 0, 0.55, 0.8, 0.5)
+  if (f.gagging) return set('squeeze', 'sad', 0, 0.8 + 0.2 * Math.sin(f.t * 1.3), -0.6, 0)
   if (f.bursting && f.power <= 0.5) return set('dizzy', 'sad', 0, 0.35 + 0.15 * Math.sin(f.t * 0.3), -0.3, 0.3)
   if (f.angry && f.t - s.errorAt < 10) return set('squeeze', 'sad', 0, 0.15, -0.8, 0)
   if (f.petting) {
@@ -631,6 +648,7 @@ const calm = (s: Scene, f: Shape) =>
   !f.yawning &&
   !f.starving &&
   !f.angry &&
+  !f.gagging &&
   !f.petting &&
   !f.greeting &&
   s.power < 0.05 &&
@@ -1245,6 +1263,11 @@ export const step = (s: Scene, width: number, height: number) => {
         color: i % 2 ? GOLD_LIGHT : WHITE,
       })
     }
+  }
+
+  // A gag coughs up a few puffs.
+  if (f.gagging && (s.tick - s.gagAt) % 6 === 1) {
+    s.bits.push({ kind: 'puff', x: mouth.x, y: mouth.y - 1, vx: (random() - 0.5) * 0.8, vy: -0.4, life: 18, max: 18, color: 0xc8e6a0 })
   }
 
   if (s.finish?.text === 'K.O.' && s.tick - s.finish.at === 1) {
@@ -1867,6 +1890,9 @@ const limbs = (c: Canvas, f: Shape, s: Scene) => {
     if (f.calling) {
       // Waving you over with both hands, in turn.
       hand = { x: ax + side * length * (0.6 + 0.35 * Math.sin(t * 0.9 + side)), y: ay - length * 1.1 }
+    } else if (f.gagging) {
+      // Clutching its throat.
+      hand = { x: f.mouth.x + side * rx * 0.3, y: f.mouth.y + ry * 0.35 }
     } else if (f.cheering || f.leveling || (s.finish?.text === 'K.O.' && t - s.finish.at < 30)) hand = up
     else if (f.frenzy > 0.5) {
       // Flailing: each hand whirls on its own wild loop.

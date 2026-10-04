@@ -37,6 +37,7 @@ import {
   toolColor,
   typed,
   wait,
+  choke,
 } from './paint'
 import type { Fuss, Scene } from './paint'
 import { registerSound } from './sound'
@@ -431,6 +432,17 @@ const warm = async ($: EngineInterface, sent: number, usage: ModelUsage) => {
   }))
 }
 
+// A single tool result this big, in tokens, makes it gag: rare in normal use.
+const HUGE = 20_000
+
+// It gags on `call`'s result, and names it with the way out: the diet.
+const gag = async ($: EngineInterface, call: string, size: number) => {
+  const tail = ` ~${kilo(size)}! d: diet`
+
+  choke(scene)
+  await reply($, 'x', `*gag* ${call.slice(0, 42 - tail.length)}${tail}`)
+}
+
 // The calls waiting on the person, by tool and label: a permission dialog or a
 // question each, the main loop's or a subagent's.
 let asks: string[] = []
@@ -764,6 +776,7 @@ export const register: Register = on => {
 
       await answered($, call)
       serve(scene, tokens(ran.text), toolColor(e.tool))
+      if (tokens(ran.text) >= HUGE) await gag($, call, tokens(ran.text))
 
       return ran
     }
@@ -782,6 +795,7 @@ export const register: Register = on => {
       await answered($, call)
       hit(scene, ran.isError === true, await $.clock.now())
       serve(scene, tokens(ran.text), toolColor(e.tool))
+      if (tokens(ran.text) >= HUGE) await gag($, call, tokens(ran.text))
       await update($, combo, () => scene.combo)
       lapse?.cancel()
       lapse = $.clock.after(COMBO_MS, () => void update($, combo, () => 0))

@@ -34,6 +34,7 @@ Or by name: `/token-monster slime green`, `/token-monster diet`, `/token-monster
 - **Glow:** your session and weekly limits, green to amber to pulsing red.
 - **Chewing:** how fast tokens stream right now, colored by tool.
 - **On fire:** tool calls landing back to back. Three or more end the turn in a K.O.
+- **Gagging:** one tool result over 20k tokens. It turns green, clutches its throat and coughs, and the readout names the call and points you at the diet (`d`).
 - **Super mode:** subagents running. Each one shows up as a little helper that feeds it. With the rate pegged too, it goes into a full frenzy.
 - **Calling you:** Claude is waiting on you, at a permission dialog or a question. It waves both hands and hops, a ! blinks beside its head, and the readout names the call. It stops when you answer.
 - **Cold leftovers:** a frosted bowl with a snowflake beside it. The prompt cache has lapsed since Claude's last response (after 5 minutes, or an hour once it sees your session keeps it that long), so the readout estimates how many tokens your next prompt re-reads uncached.

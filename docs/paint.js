@@ -15,6 +15,7 @@ const COMBO_FRAMES = 40;
 const DOZE = 1800;
 const YAWN = 40;
 const CHEER = 26;
+const GAG = 24;
 const HOP = 12;
 const PERK = 18;
 const LEVEL_UP = 50;
@@ -143,7 +144,8 @@ const createScene = (look) => ({
   eggAt: -1e3,
   waiting: false,
   waitAt: -1e3,
-  cache: null
+  cache: null,
+  gagAt: -100
 });
 const serve = (s, tokens, color, heats = true) => {
   if (tokens <= 0) return;
@@ -205,6 +207,10 @@ const hatch = (s, at) => {
   s.activeAt = s.tick;
   return true;
 };
+const choke = (s) => {
+  s.gagAt = s.tick;
+  s.activeAt = s.tick;
+};
 const wait = (s, isWaiting) => {
   if (isWaiting && !s.waiting) s.waitAt = s.tick;
   s.waiting = isWaiting;
@@ -221,7 +227,7 @@ const settle = (s) => {
   s.antic = null;
 };
 const comboShown = (s) => s.combo >= 2 && s.tick - s.comboAt <= COMBO_FRAMES;
-const lively = (s) => s.busy || s.waiting || s.heat > 0.02 || s.power > 0.02 || s.frenzy > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
+const lively = (s) => s.busy || s.waiting || s.heat > 0.02 || s.power > 0.02 || s.frenzy > 0.02 || s.motes.length > 0 || s.servings.length > 0 || s.bits.some((bit) => bit.kind !== "z" && bit.kind !== "firefly") || s.tick - s.typedAt < 15 || s.tick - s.cheerAt < CHEER || s.tick - s.perkAt < PERK || Math.abs(s.squashV) > 0.01 || comboShown(s) || s.finish !== null && s.tick - s.finish.at < 18 || s.antic !== null || s.tick - s.gagAt < GAG || s.tick - s.petAt < PET || s.tick - s.greetAt < GREET || Math.abs(s.shift) > 0.05 || s.tick - s.rankUpAt < LEVEL_UP || hatching(s);
 const shape = (s, width, height) => {
   const t = s.tick;
   const full = (s.belly?.percent ?? 0) / 100;
@@ -256,7 +262,7 @@ const shape = (s, width, height) => {
   const callP = (t - s.waitAt) % 15 / 8;
   const hop = (hopP >= 0 && hopP < 1 ? Math.sin(Math.PI * hopP) * r0 * 0.45 : 0) + (flying ? Math.sin(Math.PI * flight) * r0 * 1.5 : 0) + (s.waiting && callP < 1 ? Math.sin(Math.PI * callP) * r0 * 0.3 : 0);
   const lift = (monster === "ghost" ? 3 + Math.sin(s.breathe * 1.3) * 1.4 : 0) + (eating ? Math.abs(Math.sin(s.bob)) * (0.3 + s.heat * 1.8) : 0) + s.power * 1.5 + hop + move.lift;
-  const shake = s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 ? Math.round((hash(t, 1) - 0.5) * 2 * (1 + s.frenzy * 2)) : 0;
+  const shake = s.heat > 0.7 || s.level >= 2 || t - s.errorAt < 6 || t - s.gagAt < GAG ? Math.round((hash(t, 1) - 0.5) * 2 * (1 + s.frenzy * 2)) : 0;
   const shuffle = monster === "crab" ? Math.round(Math.sin(s.breathe * 0.8) * 2) : 0;
   const cx = width / 2 + shake + shuffle + Math.round(s.shift + move.dx);
   const feet = monster === "ghost" || monster === "slime" ? 0 : r0 * (monster === "crab" ? 0.4 : 0.18);
@@ -294,8 +300,10 @@ const shape = (s, width, height) => {
     cheering: t - s.cheerAt < CHEER,
     thinking: s.busy && !eating,
     angry: t - s.errorAt < 20,
+    gagging: t - s.gagAt < GAG,
     blink: t - s.blinkAt < 3 && t - s.typedAt >= 15,
-    body: starving ? mix(PALETTE[s.look.color] ?? 4029439, 9080729, 0.55) : mix(PALETTE[s.look.color] ?? 4029439, rainbow(t * 0.08), s.frenzy * 0.4),
+    // Gagging, it turns a little green.
+    body: starving ? mix(PALETTE[s.look.color] ?? 4029439, 9080729, 0.55) : t - s.gagAt < GAG ? mix(PALETTE[s.look.color] ?? 4029439, 10212426, 0.4) : mix(PALETTE[s.look.color] ?? 4029439, rainbow(t * 0.08), s.frenzy * 0.4),
     frenzy: s.frenzy,
     mouth: { x: cx, y: cy + ry * (monster === "slime" ? 0.3 : monster === "crab" ? 0.05 : 0.34) },
     // Where it stands at rest, and the middle of its body there, for the antics' props.
@@ -329,6 +337,7 @@ const mood = (s, f) => {
   });
   if (f.leveling) return set("happy", "none", 0, 0.85, 1, 1);
   if (f.calling) return set("open", "none", 0, 0.55, 0.8, 0.5);
+  if (f.gagging) return set("squeeze", "sad", 0, 0.8 + 0.2 * Math.sin(f.t * 1.3), -0.6, 0);
   if (f.bursting && f.power <= 0.5) return set("dizzy", "sad", 0, 0.35 + 0.15 * Math.sin(f.t * 0.3), -0.3, 0.3);
   if (f.angry && f.t - s.errorAt < 10) return set("squeeze", "sad", 0, 0.15, -0.8, 0);
   if (f.petting) {
@@ -391,7 +400,7 @@ const typed = (s) => {
   s.typedAt = s.tick;
   return away;
 };
-const calm = (s, f) => !s.busy && !s.waiting && !f.eating && !f.typing && !f.perking && !f.cheering && !f.sleeping && !f.yawning && !f.starving && !f.angry && !f.petting && !f.greeting && s.power < 0.05 && s.servings.length === 0 && s.motes.length === 0 && !comboShown(s);
+const calm = (s, f) => !s.busy && !s.waiting && !f.eating && !f.typing && !f.perking && !f.cheering && !f.sleeping && !f.yawning && !f.starving && !f.angry && !f.gagging && !f.petting && !f.greeting && s.power < 0.05 && s.servings.length === 0 && s.motes.length === 0 && !comboShown(s);
 const choose = (s, f) => {
   const night = daylight(s.hour) < 0.4;
   const options = Object.keys(ANTICS).filter(
@@ -815,6 +824,9 @@ const step = (s, width, height) => {
         color: i % 2 ? GOLD_LIGHT : WHITE
       });
     }
+  }
+  if (f.gagging && (s.tick - s.gagAt) % 6 === 1) {
+    s.bits.push({ kind: "puff", x: mouth2.x, y: mouth2.y - 1, vx: (random() - 0.5) * 0.8, vy: -0.4, life: 18, max: 18, color: 13166240 });
   }
   if (s.finish?.text === "K.O." && s.tick - s.finish.at === 1) {
     for (let i = 0; i < 24; i++) {
@@ -1261,6 +1273,8 @@ const limbs = (c, f, s) => {
     let hand = rest;
     if (f.calling) {
       hand = { x: ax + side * length * (0.6 + 0.35 * Math.sin(t * 0.9 + side)), y: ay - length * 1.1 };
+    } else if (f.gagging) {
+      hand = { x: f.mouth.x + side * rx * 0.3, y: f.mouth.y + ry * 0.35 };
     } else if (f.cheering || f.leveling || s.finish?.text === "K.O." && t - s.finish.at < 30) hand = up;
     else if (f.frenzy > 0.5) {
       const whirl = t * 1.9 + (side > 0 ? Math.PI : 0);
@@ -2022,6 +2036,7 @@ export {
   THINKING,
   WARDROBE,
   asleep,
+  choke,
   createScene,
   encode,
   finishTurn,
