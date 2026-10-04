@@ -6,8 +6,7 @@ made from scratch here out of sine partials that ring and fade like a small
 bell. Python standard library only.
 
     python3 scripts/make-sounds.py            # writes sounds/call.wav
-    python3 scripts/make-sounds.py --check    # prints duration, peak, DC offset, tail
-    python3 scripts/make-sounds.py --png DIR  # also draws its waveform strip
+    python3 scripts/make-sounds.py --check    # prints its duration, peak, DC offset, tail
 
 The file is 16-bit mono at 22050 Hz, peaks at -3 dBFS and fades to silence.
 """
@@ -15,7 +14,6 @@ The file is 16-bit mono at 22050 Hz, peaks at -3 dBFS and fades to silence.
 import math
 import os
 import struct
-import subprocess
 import sys
 import wave
 
@@ -44,17 +42,6 @@ def bell(freq, dur):
     return out
 
 
-def mix(length, *parts):
-    """Lay voices on one track: each part is (start seconds, samples)."""
-    track = [0.0] * int(length * RATE)
-    for start, samples in parts:
-        at = int(start * RATE)
-        for i, s in enumerate(samples):
-            if at + i < len(track):
-                track[at + i] += s
-    return track
-
-
 def finish(track):
     """DC blocker, a soft low-pass, -3 dBFS, then a fade at each end so nothing clicks."""
     out, x1, y1 = [], 0.0, 0.0
@@ -79,96 +66,35 @@ def finish(track):
     return lp
 
 
-def write(name, track):
-    path = os.path.join(OUT, name + '.wav')
-    data = b''.join(struct.pack('<h', max(-32767, min(32767, int(round(s * 32767))))) for s in finish(track))
-    with wave.open(path, 'wb') as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(RATE)
-        w.writeframes(data)
-    return path
-
-
 def call():
     """Ding, dong: a high note, then a lower one that rings out a little longer."""
-    return mix(1.1, (0, bell(n('E6'), 0.5)), (0.16, [s * 0.9 for s in bell(n('C6'), 0.94)]))
-
-
-SOUNDS = {'call': call}
-
-
-# --- checking ---------------------------------------------------------------
-
-
-def read(path):
-    with wave.open(path, 'rb') as w:
-        frames = w.readframes(w.getnframes())
-        return [s[0] / 32768 for s in struct.iter_unpack('<h', frames)], w.getframerate()
-
-
-def check(path):
-    samples, rate = read(path)
-    peak = max(abs(s) for s in samples)
-    dc = sum(samples) / len(samples)
-    tail = samples[-int(0.005 * rate):]
-    tail_rms = math.sqrt(sum(s * s for s in tail) / len(tail))
-    rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-    return {
-        'rms_dbfs': 20 * math.log10(rms),
-        'seconds': len(samples) / rate,
-        'bytes': os.path.getsize(path),
-        'peak_dbfs': 20 * math.log10(peak) if peak > 0 else -math.inf,
-        'dc_percent': 100 * dc,
-        'first': samples[0],
-        'last': samples[-1],
-        'tail_dbfs': 20 * math.log10(tail_rms) if tail_rms > 0 else -math.inf,
-    }
-
-
-def png(path, folder, width=600, height=120):
-    """A waveform strip: min and max of each column, with a zero line."""
-    samples, _ = read(path)
-    rows = [[(18, 18, 24)] * width for _ in range(height)]
-    mid = height // 2
-    for x in range(width):
-        rows[mid][x] = (70, 70, 90)
-    per = max(1, len(samples) // width)
-    for x in range(width):
-        chunk = samples[x * per:(x + 1) * per] or [0.0]
-        lo, hi = min(chunk), max(chunk)
-        y0, y1 = int(mid - hi * (mid - 2)), int(mid - lo * (mid - 2))
-        for y in range(max(0, y0), min(height, y1 + 1)):
-            rows[y][x] = (120, 220, 140)
-    # -3 dBFS guides
-    for y in (int(mid - PEAK * (mid - 2)), int(mid + PEAK * (mid - 2))):
-        for x in range(0, width, 4):
-            rows[y][x] = (200, 90, 90)
-    name = os.path.splitext(os.path.basename(path))[0]
-    ppm = os.path.join(folder, name + '.ppm')
-    with open(ppm, 'wb') as f:
-        f.write(b'P6 %d %d 255\n' % (width, height))
-        f.write(bytes(c for row in rows for px in row for c in px))
-    out = os.path.join(folder, name + '.png')
-    subprocess.run(['sips', '-s', 'format', 'png', ppm, '--out', out], check=True, capture_output=True)
-    os.remove(ppm)
-    return out
+    ding, dong = bell(n('E6'), 0.5), bell(n('C6'), 0.94)
+    track = [0.0] * int(1.1 * RATE)
+    at = int(0.16 * RATE)
+    for i, s in enumerate(ding):
+        track[i] += s
+    for i, s in enumerate(dong):
+        track[at + i] += 0.9 * s
+    return finish(track)
 
 
 def main(argv):
-    os.makedirs(OUT, exist_ok=True)
+    path = os.path.join(OUT, 'call.wav')
     if '--check' not in argv:
-        for name, make in SOUNDS.items():
-            write(name, make())
-    folder = argv[argv.index('--png') + 1] if '--png' in argv else None
-    print(f"{'sound':<12}{'secs':>6}{'bytes':>8}{'peak dBFS':>11}{'DC %':>8}{'tail dBFS':>11}{'RMS dBFS':>10}")
-    for name in SOUNDS:
-        path = os.path.join(OUT, name + '.wav')
-        c = check(path)
-        print(f"{name:<12}{c['seconds']:>6.2f}{c['bytes']:>8}{c['peak_dbfs']:>11.2f}{c['dc_percent']:>8.3f}{c['tail_dbfs']:>11.1f}{c['rms_dbfs']:>10.1f}")
-        if folder:
-            os.makedirs(folder, exist_ok=True)
-            png(path, folder)
+        os.makedirs(OUT, exist_ok=True)
+        data = b''.join(struct.pack('<h', max(-32767, min(32767, int(round(s * 32767))))) for s in call())
+        with wave.open(path, 'wb') as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(RATE)
+            w.writeframes(data)
+    with wave.open(path, 'rb') as w:
+        rate = w.getframerate()
+        samples = [s[0] / 32768 for s in struct.iter_unpack('<h', w.readframes(w.getnframes()))]
+    peak = max(abs(s) for s in samples)
+    tail = samples[-int(0.005 * rate):]
+    tail_rms = math.sqrt(sum(s * s for s in tail) / len(tail))
+    print(f'call.wav: {len(samples) / rate:.2f} s, peak {20 * math.log10(peak):.2f} dBFS, DC {100 * sum(samples) / len(samples):.3f} %, tail {20 * math.log10(max(tail_rms, 1e-9)):.1f} dBFS')
 
 
 if __name__ == '__main__':

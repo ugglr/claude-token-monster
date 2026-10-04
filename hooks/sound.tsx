@@ -21,12 +21,9 @@ const TYPING = 2000
 
 const LINE = 'Usage: /token-monster sound on|off'
 
-// What a hot reload may lose: then the atom is read again.
-let cached: boolean | undefined
+const isOn = ($: EngineInterface) => read($, sound)
 
-const isOn = async ($: EngineInterface) => (cached ??= await read($, sound))
-
-// Resolves as the clip starts, never when it ends: a hook awaits the checks, not the sound.
+// Starts the clip and returns without waiting for it to play or end.
 const chime = async ($: EngineInterface, scene: Scene) => {
   if (!(await isOn($)) || (await $.clock.now()) - scene.typedMs < TYPING) return
 
@@ -34,7 +31,6 @@ const chime = async ($: EngineInterface, scene: Scene) => {
 }
 
 const turnOn = async ($: EngineInterface, value: boolean) => {
-  cached = value
   await update($, sound, () => value)
   await $.store.set('sound', value)
 
@@ -46,12 +42,13 @@ const turnOn = async ($: EngineInterface, value: boolean) => {
 
 // `scene` is the monster's own (register.tsx): plain data may cross an import, $ may not.
 export const registerSound = (on: On, scene: Scene) => {
-  // A `claude -p` run never plays a sound.
+  // A `claude -p` run never loads the choice, so it stays silent.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     const done = await next(e)
 
-    cached = (await $.store.get('sound')) === true
-    await update($, sound, () => cached === true)
+    const value = (await $.store.get('sound')) === true
+
+    await update($, sound, () => value)
 
     return done
   })
@@ -77,7 +74,7 @@ export const registerSound = (on: On, scene: Scene) => {
     return { element: e.element }
   })
 
-  // Claude started waiting on the person: one chime, not one per dialog while it waits.
+  // Claude started waiting on the person: one chime, and none for a second call while it waits.
   on('state.set', { plugin: 'token-monster', key: 'waiting' }, async ($, e, next) => {
     const done = await next(e)
 
