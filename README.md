@@ -2,6 +2,8 @@
 
 [![Dad approved](https://img.shields.io/badge/Dad-approved-brightgreen)](https://github.com/ugglr/dad)
 
+![The cast: eating, on fire, super mode, a frenzy, asleep, petted, levelling up, hatching, crying, a K.O., watching you type, and a burp](media/cast.gif)
+
 A pixel-art virtual pet that lives in a side pane of Claude Code and eats your tokens. One glance tells you how full your context is, how close you are to your limits, and what Claude is doing right now. **[See it live](https://ugglr.github.io/claude-token-monster/)** (the monsters on the site are real, type to feed them).
 
 ## Install
@@ -16,8 +18,6 @@ Inside Claude Code:
 Start a new session and the monster moves in. Needs Claude Code 2.1.287 or later; looks best in a terminal with 24-bit color.
 
 Update: `claude plugin marketplace update token-monster`, then `claude plugin update token-monster@token-monster`. Remove: `claude plugin uninstall token-monster@token-monster`.
-
-![The cast: eating, on fire, super mode, a frenzy, asleep, petted, levelling up, hatching, crying, a K.O., watching you type, and a burp](media/cast.gif)
 
 ## Use
 
